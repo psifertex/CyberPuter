@@ -5,6 +5,9 @@
 
 namespace UIContext {
 
+std::atomic<bool> visualizationActive{false};
+SemaphoreHandle_t displayMutex = nullptr;
+
 // ------------------------------------------------------------
 //  FreeRTOS-Infrastruktur
 // ------------------------------------------------------------
@@ -45,6 +48,7 @@ std::atomic<int>  batteryPercent{0};
 //  Lifecycle-Helpers
 // ------------------------------------------------------------
 void init() {
+    displayMutex = xSemaphoreCreateRecursiveMutex();
     taskMutex = xSemaphoreCreateMutex();
     // Handles sind bereits NULL — kein weiterer Init nötig
 }

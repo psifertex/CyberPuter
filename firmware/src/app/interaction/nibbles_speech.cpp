@@ -161,11 +161,15 @@ void nibblesSpeechBegin() {
 }
 
 void drawThoughtBubble(const char* message, int x0, int y0) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     clearSpeechBubble();
     drawBubble(message, x0, y0, 0x2444, 0x07E0, 0x07E0);  // dark green fill, green border, green text
 }
 
 static void clearThoughtBubble() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     // Clear thought bubble area
     if (MenuController::isOpen() || SusDeviceView::isOpen() || ConnectedDeviceView::isOpen() ||
         FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen()) return;
@@ -214,6 +218,8 @@ static void clearThoughtBubble() {
 }
 
 static void showMumble(const char* message, bool force = false) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     if (MenuController::isOpen() || SusDeviceView::isOpen() || ConnectedDeviceView::isOpen() ||
         FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen()) return; 
     if(force || !ScanContext::scanIsRunning){

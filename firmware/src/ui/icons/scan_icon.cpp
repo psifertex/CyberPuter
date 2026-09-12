@@ -1,4 +1,5 @@
 #include "scan_icon.h"
+#include "app/context/ui_context.h"
 #include "ui/overlay/draw_overlay.h"
 #include "config/scan_config.h"
 #include "infrastructure/platform/hardware.h"
@@ -15,6 +16,8 @@
 #define BG_COLOR 0x00C4
 
 void drawBars(int x, int y, int level) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
   int barWidth = 6;
   int spacing = 4;
 
@@ -50,11 +53,15 @@ void drawBars(int x, int y, int level) {
 
 // Icon löschen (optional)
 void clearScanIcon() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
   M5.Lcd.fillRect(ICON_X, ICON_Y, ICON_WIDTH, ICON_HEIGHT, BG_COLOR);
 }
 
 // Hauptfunktion
 void showScanIcon() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
 
   // Erst löschen
   clearScanIcon();

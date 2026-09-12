@@ -1,6 +1,9 @@
 #include "draw_overlay.h"
+#include "app/context/ui_context.h"
 
 void drawOverlay(const uint16_t* img, int w, int h, int x0, int y0) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
         uint16_t color = img[y * w + x];
@@ -22,6 +25,8 @@ static const int EXPR_REGION_H = 38;   // 90  - 52
 void drawComposite(const uint16_t* base, int baseW, int baseX, int baseY,
                    const uint16_t* overlay, int overlayW, int overlayH,
                    int overlayX, int overlayY) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     // Sprite-composite the expression region (all RAM ops, single SPI push)
     M5Canvas canvas(&M5.Lcd);
     if (!canvas.createSprite(EXPR_REGION_W, EXPR_REGION_H)) return;
@@ -55,6 +60,8 @@ void drawComposite(const uint16_t* base, int baseW, int baseX, int baseY,
 
 void drawBubble(const char* message, int x0, int y0,
                 uint16_t fillColor, uint16_t borderColor, uint16_t textColor) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     int textLen = strlen(message);
     // Bubble width adapts to text (clamped to screen)
     int bubbleW = min(108, max(60, textLen * 6 + 16));

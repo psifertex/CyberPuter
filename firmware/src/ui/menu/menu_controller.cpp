@@ -1,4 +1,5 @@
 #include "menu_controller.h"
+#include "ui/visualization/visualization_view.h"
 
 #include <M5Unified.h>
 #include "infrastructure/logging/logger.h"
@@ -104,7 +105,7 @@ static int         scrollOff_  = 0;      // first visible item index
 
 // ── Item table ────────────────────────────────────────────────
 // Built after init() because items reference state_ fields.
-static MenuItem items_[40];
+static MenuItem items_[48];
 static int      itemCount_ = 0;
 
 // Helper to play a tone if audio is enabled
@@ -244,6 +245,10 @@ static void buildItems() {
         item.onSliderChange  = onChange;
         items_[itemCount_++] = item;
     };
+
+    section("CYBERPUTER");
+    action("LABScon Neon City", []() { VisualizationView::open(); }, "V");
+    // TODO: Add Radar and Signal Rain when their renderer/budget checks pass.
 
     // ── HELP ─────────────────────────────────────────────────
     section("HELP");

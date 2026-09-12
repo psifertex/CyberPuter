@@ -44,6 +44,7 @@
 #include "src/ui/finder/approach_view.h"
 
 #include "ui/menu/menu_controller.h"
+#include "ui/visualization/visualization_view.h"
 #include "ui/filemanager/file_manager_view.h"
 #include "ui/conview/connected_device_view.h"
 
@@ -55,7 +56,9 @@ TaskHandle_t scanTaskHandle = NULL;
 void scanTask(void* parameter) {
   while (true) {
 
-    if (ScanContext::bleScanEnabled && !ScanContext::scanIsRunning) {
+    if (VisualizationView::serviceScanner()) {
+      // The visualization borrows this task and returns it after cleanup.
+    } else if (ScanContext::bleScanEnabled && !ScanContext::scanIsRunning) {
       nibblesSpeechNotifyEvent();
       scanForDevices();
     }
@@ -191,7 +194,7 @@ if (!DeviceContext::deviceConfig.getFirstBootDone()) {
 
 void loop() {
 #if defined(CARDPUTER)  
-  Screenshot::handle();
+  if (!VisualizationView::isOpen()) Screenshot::handle();
 #endif  
 
   static uint32_t lastTick = 0;
@@ -210,6 +213,22 @@ void loop() {
 
   hardwareUpdate();
   unsigned long currentTime = millis();
+
+  if (VisualizationView::isOpen()) {
+#if HAS_KEYBOARD
+    if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+      for (auto key : M5Cardputer.Keyboard.keysState().word)
+        VisualizationView::handleKey(key);
+    }
+#else
+    if (M5.BtnA.wasPressed()) VisualizationView::handleKey('s');
+    if (M5.BtnB.wasPressed()) VisualizationView::close();
+#endif
+    if (NetworkContext::wardrivingEnabled.load()) NetworkContext::gpsManager.update();
+    VisualizationView::update();
+    delay(1);
+    return;
+  }
 
   // ── Approach View — periodischer Scan + Redraw, unabhängig von Tasteneingaben ──
   if (ApproachView::isOpen()) {
@@ -359,6 +378,10 @@ void loop() {
 
       for (auto key : status.word) {
         //Serial.printf("KEY RECEIVED: [%c] HEX=0x%02X\n", key, (uint8_t)key);
+        if (key == 'v' || key == 'V') {
+          VisualizationView::open();
+          return;
+        }
         if (key == 'm' || key == 'M' ||
             key == 'q' || key == 'Q') {
           LOG(LOG_CONTROL, "M/Q pressed — showing main menu");

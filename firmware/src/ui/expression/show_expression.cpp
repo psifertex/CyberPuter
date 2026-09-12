@@ -54,6 +54,8 @@ static int voltageToPercent(int mv) {
 //  Pointer
 // ----------------------------------------------------------------
 void drawPointer(int pointer) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     int      x       = 5;
     int      y       = 55;
     uint16_t bgColor = 0x00C4;
@@ -68,6 +70,8 @@ void drawPointer(int pointer) {
 //  Icon drawing
 // ----------------------------------------------------------------
 void drawWifiIcon(int x, int y, bool active) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     uint16_t color = active ? GREEN : 0x4208;
     M5.Lcd.fillRect(x - 1, y + 6, 3, 3, color);
     M5.Lcd.fillRect(x + 3, y + 3, 3, 6, color);
@@ -75,6 +79,8 @@ void drawWifiIcon(int x, int y, bool active) {
 }
 
 void drawScanIcon(int x, int y, ScanState state, int radius) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     uint16_t color;
     switch (state) {
         case SCAN_RUNNING:  color = BLUE;   break;
@@ -85,6 +91,8 @@ void drawScanIcon(int x, int y, ScanState state, int radius) {
 }
 
 void drawGPSIcon(int x, int y, bool hasFix) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     uint16_t color = hasFix ? GREEN : RED;
     M5.Lcd.drawCircle(x + 4, y + 4, 4, color);
     M5.Lcd.drawLine(x + 4, y,     x + 4, y + 8, color);
@@ -93,6 +101,8 @@ void drawGPSIcon(int x, int y, bool hasFix) {
 }
 
 void drawBatteryIcon(int x, int y, int percent, bool charging) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     M5.Lcd.drawRect(x, y, 16, 8, WHITE);
     M5.Lcd.fillRect(x + 16, y + 2, 2, 4, WHITE);
 
@@ -193,6 +203,8 @@ void updateBatteryState() {
 //  Heart helpers
 // ----------------------------------------------------------------
 void drawHeart(int x, int y, uint16_t color) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     int s = 2;
     M5.Lcd.fillRect(x+2*s, y+0*s, s, s, color);
     M5.Lcd.fillRect(x+3*s, y+0*s, s, s, color);
@@ -215,6 +227,8 @@ void drawHeart(int x, int y, uint16_t color) {
 }
 
 void clearHearts() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     M5.Lcd.fillRect(25, 24, 40, 30, 0x00C4);
 }
 
@@ -222,6 +236,8 @@ void clearHearts() {
 //  Speech bubble
 // ----------------------------------------------------------------
 void clearSpeechBubble() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     if (MenuController::isOpen() || SusDeviceView::isOpen() || FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen() || UIContext::helpOverlayVisible || ConnectedDeviceView::isOpen() ) return;
     int srcX    = BUBBLE_X - NIBBLES_FRONT_X;
     int srcY    = BUBBLE_RECT_Y - NIBBLES_FRONT_Y;
@@ -273,6 +289,8 @@ void clearSpeechBubble() {
 //  Help overlay — reads/writes UIContext::helpOverlayVisible
 // ----------------------------------------------------------------
 void showHelpOverlay() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     if (MenuController::isOpen() || SusDeviceView::isOpen() || FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen() || ConnectedDeviceView::isOpen()) return;
     UIContext::helpOverlayVisible = true;
 
@@ -318,6 +336,8 @@ void showHelpOverlay() {
 }
 
 void dismissHelpOverlay() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     if (MenuController::isOpen() || SusDeviceView::isOpen() || FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen() || ConnectedDeviceView::isOpen()) {
         return;
     }
@@ -550,6 +570,8 @@ void showHappyExpressionTask(void* parameter) {
 //  Status bar
 // ----------------------------------------------------------------
 void drawStatusIcons(int x, int y) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     if (MenuController::isOpen() || SusDeviceView::isOpen() || FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen() || UIContext::helpOverlayVisible || ConnectedDeviceView::isOpen()) return;
     drawWifiIcon(x, y, NetworkContext::isWebLogActive);  // isWebLogActive → network_context later
 
@@ -578,6 +600,8 @@ void drawStatusIcons(int x, int y) {
 }
 
 void drawStats(int sniffed, int sus, int spotted, int x, int y) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     M5.Lcd.setTextColor(WHITE, 0x00C4);
     M5.Lcd.setCursor(x, y);                         M5.Lcd.printf("Spt %-4d", spotted);
     M5.Lcd.setCursor(x, y + STATS_LINE_HEIGHT);     M5.Lcd.printf("Snf %-4d", sniffed);
@@ -588,6 +612,8 @@ void drawStats(int sniffed, int sus, int spotted, int x, int y) {
 
 void drawXPBar(int x, int y, bool forceRedraw = false)
 {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     static uint32_t lastLevel = UINT32_MAX;
     static int lastPercentStep = -1;
     static String lastTitle = "";
@@ -678,6 +704,8 @@ void drawXPBar(int x, int y, bool forceRedraw = false)
 }
 
 void showResearchMode() {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     bool currentState = UIContext::isResearchModeActive.load();
 
     int cx = 10;
@@ -690,6 +718,8 @@ void showResearchMode() {
 }
 
 void showFindingCounter(int sniffed, int sus, int spotted) {
+    UIContext::DisplayGuard displayGuard;
+    if (!displayGuard) return;
     if (MenuController::isOpen() || SusDeviceView::isOpen() || FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen() || UIContext::helpOverlayVisible || ConnectedDeviceView::isOpen()) return;
     updateBatteryState();
 

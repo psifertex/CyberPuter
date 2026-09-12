@@ -1,3 +1,4 @@
 .DS_Store
 .pio/
 node_modules/
+/build/

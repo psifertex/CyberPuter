@@ -19,6 +19,30 @@
 
 namespace UIContext {
 
+// City/radar/rain own the LCD while their modal view is active.
+extern std::atomic<bool> visualizationActive;
+extern SemaphoreHandle_t displayMutex;
+
+// Serializes legacy animation primitives with visualization handoff and pushes.
+// Recursive because legacy draw helpers call one another. Re-check ownership
+// after taking the lock so a waiting mascot task cannot overwrite the city.
+class DisplayGuard {
+public:
+    explicit DisplayGuard(bool visualization = false) {
+        if (!displayMutex) { allowed = !visualization; return; }
+        if (!visualization && visualizationActive.load()) return;
+        locked = xSemaphoreTakeRecursive(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE;
+        allowed = locked && (visualization || !visualizationActive.load());
+    }
+    ~DisplayGuard() { if (locked) xSemaphoreGiveRecursive(displayMutex); }
+    explicit operator bool() const { return allowed; }
+    DisplayGuard(const DisplayGuard&) = delete;
+    DisplayGuard& operator=(const DisplayGuard&) = delete;
+private:
+    bool locked = false;
+    bool allowed = false;
+};
+
 // ------------------------------------------------------------
 //  FreeRTOS-Infrastructure
 //  taskMutex safes all TaskHandle-Operations
