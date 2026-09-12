@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cyberputer / LABScon — display studies</title>
+<link rel="stylesheet" href="style.css">
+<main>
+  <header><span class="eyebrow">CYBERPUTER / DISPLAY STUDIES / 001</span><p class="edition">LABScon costume edition</p>
+    <h1>A little signal.<br>A lot of atmosphere.</h1>
+    <p class="intro">Three living windows into the radio noise around you. Each display is rendered at <strong>240 × 135 pixels</strong>, exactly matching the Cardputer ADV.</p>
+  </header>
+  <nav aria-label="Preview controls">
+    <button id="pause">Pause animation</button>
+    <label>Display scale <select id="scale"><option value="2">2×</option><option value="3" selected>3×</option><option value="1">1× native pixels</option></select></label>
+    <label>Scene <select id="scene"><option value="busy">Conference crowd</option><option value="quiet">A few signals</option><option value="empty">No signals</option></select></label>
+  </nav>
+  <section class="studies">
+    <article><div class="caption"><span>01 / SIGNAL FIELD</span><span class="tag">THE SCANNER</span></div>
+      <div class="bezel"><canvas id="radar" width="240" height="135" aria-label="Animated neon radar with sample Bluetooth device names"></canvas></div>
+      <div class="detail"><h2>Neon radar</h2><p>A violet sweep wakes cyan signals. Names drift around a LABScon core; a lower readout tracks the strongest signal.</p><button data-save="radar">Save 240 × 135 PNG ↗</button></div>
+    </article>
+    <article><div class="caption"><span>02 / NAME CASCADE</span><span class="tag">THE ARTIFACT</span></div>
+      <div class="bezel"><canvas id="rain" width="240" height="135" aria-label="Animated code rain with sample device names and large LABScon lettering"></canvas></div>
+      <div class="detail"><h2>Signal rain</h2><p>Names materialize inside falling glyphs. A large LABScon wordmark floats above the stream, readable while you wear it.</p><button data-save="rain">Save 240 × 135 PNG ↗</button></div>
+    </article>
+    <article><div class="caption"><span>03 / GHOST DISTRICT</span><span class="tag">THE WORLD</span></div>
+      <div class="bezel"><canvas id="city" width="240" height="135" aria-label="Animated cyberpunk city with sample device names on neon signs"></canvas></div>
+      <div class="detail"><h2>Neon city</h2><p>Nearby devices become signs in a rainy skyline. LABScon crowns the tallest tower; stronger signals light up the district.</p><button data-save="city">Save 240 × 135 PNG ↗</button></div>
+    </article>
+  </section>
+  <footer><p>SIMULATED BLE DATA · No Bluetooth access or live scanning. Radar positions are decorative, not measured bearings.</p><p>Custom pixel lettering uses the <a href="https://www.labscon.io/">LABScon</a> name; it is not a reproduction of the official logo. Native pixel scale reflects resolution, not physical screen size.</p></footer>
+</main>
+<script src="preview.js"></script>
+</html>

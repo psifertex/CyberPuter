@@ -1,0 +1,3 @@
+[submodule "research/GhostBLE"]
+	path = research/GhostBLE
+	url = https://github.com/SmonSE/GhostBLE.git
