@@ -1,0 +1,29 @@
+# VSCode
+.vscode/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log 
+
+# PlatformIO
+.pio/
+
+#Wifi secrets at the moment default values
+#src/config/secrets.h     
+
+# Build files
+build/
+dist/
+
+# Example scan logs (contain real device data)
+/examples
+
+# Personal notes
+/CLAUDE.md
