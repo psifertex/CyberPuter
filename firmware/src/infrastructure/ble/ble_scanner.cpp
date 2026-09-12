@@ -1,0 +1,1831 @@
+#include "ble_scanner.h"
+
+#include <algorithm>
+#include <unordered_set>
+#include <vector>
+
+#include "app/features/meta_glasses.h"
+#include "app/features/flock_detection.h"
+
+#include "app/context/device_context.h"
+#include "app/context/network_context.h"
+#include "app/context/scan_context.h"
+#include "app/context/ui_context.h"
+#include "app/context/network_context.h"
+#include "app/context/sus_log_context.h"
+#include "app/context/connected_device_context.h"
+
+#include "config/detection_config.h"
+
+#include "ui/menu/menu_controller.h"
+
+#include "core/parsing/appearance_parser.h"
+#include "core/parsing/binary_format_detector.h"
+#include "core/parsing/fmdn_parser.h"
+#include "core/detection/target_device.h"
+#include "core/parsing/sdo_service_parser.h"
+#include "core/parsing/service_parser.h"
+#include "core/security/gatt_fingerprint.h"
+
+#include "core/findmy/findmy_payload_parser.h"
+
+#include "utils/string_utils.h"
+
+#include "gattServices/notify_handler.h"
+
+#include "infrastructure/ble/handler/sdo_handlers.h"
+
+#include "web/web_sender.h"
+
+
+// ---------------------------------------------------------------------------
+//  Device registry — tracks seen devices across scan cycles.
+//  Cleared reactively when heap runs low or registry grows too large.
+// ---------------------------------------------------------------------------
+DeviceRegistry registry;
+
+// ---------------------------------------------------------------------------
+//  Active NimBLE client — single instance, created/deleted per device.
+//  Always set to nullptr after deleteClient() to avoid dangling pointer.
+// ---------------------------------------------------------------------------
+NimBLEClient* pClient = nullptr;
+
+// ---------------------------------------------------------------------------
+//  Tesla speech bubble messages — chosen at random on detection.
+// ---------------------------------------------------------------------------
+static const char* teslaMsgs[] = {
+    "Oh! Tesla!",
+    "Ooo Tesla!",
+    "Hey Tesla!",
+    "Sniff Tesla!",
+    "Tesla ping!"
+};
+static constexpr int TESLA_MSG_COUNT = sizeof(teslaMsgs) / sizeof(teslaMsgs[0]);
+
+// ---------------------------------------------------------------------------
+//  Xiao Biscuit speech bubble messages — chosen at random on detection.
+// ---------------------------------------------------------------------------
+static const char* biscuitMsgs[] = {
+    "Ooo Biscuit!",
+    "Hey Biscuit!",
+    "Biscuit spotted!",
+    "Sniff Biscuit!",
+    "Biscuit ping!"
+};
+static constexpr int BISCUIT_MSG_COUNT = sizeof(biscuitMsgs) / sizeof(biscuitMsgs[0]);
+
+// ---------------------------------------------------------------------------
+//  Flipper Zero speech bubble messages — chosen at random on detection.
+// ---------------------------------------------------------------------------
+static const char* flipperMsgs[] = {
+    "Oh! Flipper!",
+    "Ooo Flipper!",
+    "Hey Flipper!",
+    "Sniff Flipper!",
+    "Flipper ping!"
+};
+static constexpr int FLIPPER_MSG_COUNT = sizeof(flipperMsgs) / sizeof(flipperMsgs[0]);
+
+// ---------------------------------------------------------------------------
+//  Heart animation task flag.
+//  atomic: heartTask runs on Core 1, read from Core 0.
+// ---------------------------------------------------------------------------
+static std::atomic<bool> heartTaskRunning{false};
+
+// ---------------------------------------------------------------------------
+//  Service summary string — used for logging and speech bubble messages.
+//  Populated during scan processing, cleared after each device.
+// ---------------------------------------------------------------------------
+String serviceSummary;
+
+// ===========================================================================
+//  Structs
+// ===========================================================================
+
+// Parsed iBeacon advertisement payload.
+struct IBeaconInfo {
+    bool        valid    = false;
+    std::string uuid;
+    uint16_t    major    = 0;
+    uint16_t    minor    = 0;
+    int8_t      txPower  = 0;
+};
+
+static bool isLikelyJson(const std::string& value) {
+    if (value.empty()) return false;
+
+    // Führende Whitespaces überspringen
+    size_t start = 0;
+    while (start < value.size() && isspace((unsigned char)value[start])) start++;
+    if (start >= value.size()) return false;
+
+    char first = value[start];
+    if (first != '{' && first != '[') return false;
+
+    // Trailing Whitespaces überspringen, letztes Zeichen prüfen
+    size_t end = value.size() - 1;
+    while (end > start && isspace((unsigned char)value[end])) end--;
+
+    char last = value[end];
+    return (first == '{' && last == '}') || (first == '[' && last == ']');
+}
+
+static void logGpsTimestampToActiveCategories(const String& devTag)
+{
+    if (!NetworkContext::wardrivingEnabled.load() ||
+        !NetworkContext::gpsManager.isValid()) {
+        return;
+    }
+
+    char gpsMsg[160];
+
+    snprintf(
+        gpsMsg,
+        sizeof(gpsMsg),
+        "%s[TIMESTAMP][GPS][%s][SAT:%u][Lat:%.6f][Lon:%.6f]",
+        devTag.c_str(),
+        NetworkContext::gpsManager.getTimestamp().c_str(),
+        NetworkContext::gpsManager.getSatellites(),
+        NetworkContext::gpsManager.getLatitude(),
+        NetworkContext::gpsManager.getLongitude()
+    );
+
+    const LogCategory categories[] = {
+        LOG_GATT,
+        LOG_PRIVACY,
+        LOG_SECURITY,
+        //LOG_BEACON,
+        //LOG_SNIFFED,
+        //LOG_TARGET
+    };
+
+    for (LogCategory category : categories) {
+
+        if (!logIsCategoryEnabled(category))
+            continue;
+
+        LOG(category, gpsMsg);
+    }
+}
+
+// Extra Payload
+void extractUUIDs(const std::vector<uint8_t>& payload) {
+    int i = 0;
+
+    while (i < payload.size()) {
+        uint8_t len = payload[i++];
+        if (len == 0 || i >= payload.size()) break;
+
+        uint8_t type = payload[i++];
+
+        // 16-bit UUIDs
+        if (type == 0x02 || type == 0x03) {
+            for (int j = 0; j < len - 1; j += 2) {
+                if (i + j + 1 >= payload.size()) break;
+
+                String indent = StringUtils::indentFromTag(devTag);
+                uint16_t uuid = payload[i + j] | (payload[i + j + 1] << 8);
+                LOG(LOG_GATT, indent + "16-bit UUID: " + String(uuid, HEX));
+            }
+        }
+
+        // 128-bit UUIDs
+        if (type == 0x06 || type == 0x07) {
+            for (int j = 0; j < len - 1; j += 16) {
+                if (i + j + 15 >= payload.size()) break;
+
+                char buf[37];
+                sprintf(buf,
+                    "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                    payload[i+j+15], payload[i+j+14], payload[i+j+13], payload[i+j+12],
+                    payload[i+j+11], payload[i+j+10],
+                    payload[i+j+9],  payload[i+j+8],
+                    payload[i+j+7],  payload[i+j+6],
+                    payload[i+j+5],  payload[i+j+4],
+                    payload[i+j+3],  payload[i+j+2],
+                    payload[i+j+1],  payload[i+j]
+                );
+                String indent = StringUtils::indentFromTag(devTag);
+                LOG(LOG_GATT, indent + "128-bit UUID: " + String(buf));
+            }
+        }
+
+        i += (len - 1);
+    }
+}
+
+// ===========================================================================
+//  Helper: heart animation FreeRTOS task
+// ===========================================================================
+static void heartTask(void* param) {
+    heartTaskRunning.store(true);
+
+    drawHeart(30, 30, TFT_RED);
+    drawHeart(45, 40, TFT_RED);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    clearHearts();
+
+    heartTaskRunning.store(false);
+    vTaskDelete(NULL);
+}
+
+// ===========================================================================
+//  Helper: parse iBeacon from raw manufacturer data.
+//  Returns IBeaconInfo with valid=false if the data does not match iBeacon.
+// ===========================================================================
+static IBeaconInfo parseIBeacon(const std::string& mfg) {
+    IBeaconInfo info;
+
+    // Minimum iBeacon payload: 25 bytes
+    if (mfg.size() < 25) return info;
+
+    const uint8_t* d = (const uint8_t*)mfg.data();
+
+    // Apple Company ID (0x004C) + iBeacon type/length (0x02 0x15)
+    if (d[0] != 0x4C || d[1] != 0x00) return info;
+    if (d[2] != 0x02 || d[3] != 0x15) return info;
+
+    char uuidStr[37];
+    snprintf(uuidStr, sizeof(uuidStr),
+        "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+        d[4],  d[5],  d[6],  d[7],
+        d[8],  d[9],
+        d[10], d[11],
+        d[12], d[13],
+        d[14], d[15], d[16], d[17], d[18], d[19]
+    );
+
+    info.uuid    = uuidStr;
+    info.major   = (d[20] << 8) | d[21];
+    info.minor   = (d[22] << 8) | d[23];
+    info.txPower = (int8_t)d[24];
+    info.valid   = true;
+
+    return info;
+}
+
+// ============================================================
+//  Apple Find My Tracker Detection
+//  Source: TU Darmstadt OpenHaystack research, Adam Catley reverse engineering
+//  Note: Cannot distinguish AirTag specifically from other Find My
+//        accessories (AirPods case, Chipolo, Pebblebee, etc.) — Apple
+//        designs all Find My devices to look identical in BLE advertising.
+// ============================================================
+static bool detectAppleFindMy(const std::string& mfg, bool& isOfflineFinding) {
+    isOfflineFinding = false;
+
+    if (mfg.size() < 3) return false;
+    if ((uint8_t)mfg[0] != 0x4C || (uint8_t)mfg[1] != 0x00) return false;
+
+    uint8_t continuityType = (uint8_t)mfg[2];
+    if (continuityType != 0x12) return false;
+
+    isOfflineFinding = (mfg.size() >= 25);
+    return true;
+}
+
+// ===========================================================================
+//  Helper: estimate physical distance from TX power and RSSI.
+//  Returns -1.0 for invalid/unrealistic values.
+// ===========================================================================
+static float estimateDistance(int txPower, int rssi) {
+    if (rssi == 0 || txPower == 0) return -1.0f;
+
+    float ratio    = (float)rssi / (float)txPower;
+    float distance = (ratio < 1.0f)
+                   ? powf(ratio, 10.0f)
+                   : 0.89976f * powf(ratio, 7.7095f) + 0.111f;
+
+    // Discard unrealistic values (negative, NaN, infinity, >1000m)
+    if (distance < 0.0f || distance > 1000.0f || isnan(distance) || isinf(distance))
+        return -1.0f;
+
+    return distance;
+}
+
+// ===========================================================================
+//  Helper: check if a raw string is printable ASCII (32–126).
+//  Used to filter binary garbage from GATT characteristic values.
+// ===========================================================================
+static bool isPrintableText(const std::string& s)
+{
+    if (s.empty())
+        return false;
+
+    for (unsigned char c : s)
+    {
+        if (c < 32 || c > 126)
+            return false;
+    }
+
+    return true;
+}
+
+// ===========================================================================
+//  Helper: convert raw bytes to an uppercase hex string ("AA BB CC ...").
+// ===========================================================================
+static String bytesToHexString(const std::string& data) {
+    String out;
+    out.reserve(data.length() * 3);
+    for (uint8_t b : data) {
+        if (b < 0x10) out += "0";
+        out += String(b, HEX);
+        out += " ";
+    }
+    out.toUpperCase();
+    return out;
+}
+
+// ===========================================================================
+//  Scan control
+// ===========================================================================
+
+void startBleScan() {
+    LOG(LOG_SCAN, "Starting BLE scan...");
+    ScanContext::scanIsRunning.store(false);  // allow scanForDevices() to trigger
+}
+
+void stopBleScan() {
+    LOG(LOG_SCAN, "Stopping BLE scan...");
+    NimBLEDevice::getScan()->stop();
+    ScanContext::bleScanEnabled.store(false);
+    ScanContext::scanCancelRequested.store(true);
+}
+
+// ===========================================================================
+//  parseDeviceInfo
+//
+//  Extracts address, name, RSSI, manufacturer data, service UUIDs, iBeacon,
+//  PwnBeacon, and advertisement service data from the advertised device.
+//
+//  Applies early-exit filters:
+//    - null device
+//    - own address (self-advertisement)
+//    - RSSI below ignore threshold
+//    - already seen MAC (dedup via DeviceRegistry)
+//    - already seen fingerprint (dedup for rotating MACs)
+//
+//  Populates ScanContext strings and outDeviceSessionId.
+//  Returns false if the device should be skipped entirely.
+// ===========================================================================
+static bool parseDeviceInfo(
+    const NimBLEAdvertisedDevice* device,
+    uint16_t&     manufacturerId,
+    String&       manufacturerName,
+    bool&         isIBeacon,
+    IBeaconInfo&  beacon,
+    //bool&         isPwnBeacon,
+    //PwnBeaconInfo& pwnBeacon,
+    bool&         hasCustomService,
+    bool&         hasWeakName,
+    bool&         isUnknownManufacturer,
+    bool&         isSecurityOrTrackingDevice,
+    bool&         proprietary,
+    int&          outDeviceSessionId)
+{
+    // --- Guard: null device ---
+    if (device == nullptr) {
+        LOG(LOG_SYSTEM, "device is null — skipping.");
+        return false;
+    }
+
+    // --- Guard: skip our own advertisement ---
+    if (device->getAddress().equals(NimBLEDevice::getAddress())) {
+        return false;
+    }
+
+    // --- Populate shared scan strings ---
+    ScanContext::addrStr       = device->getAddress().toString();
+    address                    = ScanContext::addrStr.c_str();
+    localName                  = device->haveName() ? String(device->getName().c_str()) : "";
+    ScanContext::rssi.store(device->getRSSI());
+    ScanContext::is_connectable = device->isConnectable();
+
+    // --- Guard: ignore devices below RSSI threshold ---
+    if (ScanContext::rssi.load() <= RSSI_IGNORE_THRESHOLD) {
+        LOG(LOG_SCAN, String("Ignoring far device: ")
+            + String(ScanContext::addrStr.c_str())
+            + " (" + String(ScanContext::rssi.load()) + " dBm)");
+        return false;
+    }
+
+    // --- Dedup: skip already-seen MAC addresses ---
+    if (!registry.isNewDevice(ScanContext::addrStr)) {
+        LOG(LOG_SCAN, String("Already seen: ") + address.c_str());
+        return false;
+    }
+
+    // --- Dedup: skip already-seen fingerprints (handles rotating MACs) ---
+    bool isApple = (manufacturerId == 0x004C) || (manufacturerName == "Apple Inc.");
+    SoftFingerprint fp = isApple
+                       ? createAppleFingerprint(device, localName, ScanContext::rssi.load())
+                       : createFingerprint(device);
+
+    if (!registry.isNewFingerprint(fp)) {
+        return false;
+    }
+
+    // --- Assign incremental session ID for cross-log correlation ---
+    outDeviceSessionId = ScanContext::getOrAssignDeviceId(ScanContext::addrStr);
+    devTag = "[#" + String(outDeviceSessionId) + "] ";
+
+    // --- Risk factor: weak / default device name ---
+    if (localName == "< -- >"       || localName == "BLE Device" ||
+        localName == "Random"       || localName.startsWith("ESP_")  ||
+        localName.startsWith("ESP32") || localName.startsWith("Arduino") ||
+        localName.startsWith("HM")  || localName.startsWith("HC-") ||
+        localName.startsWith("BLE")) {
+        hasWeakName = true;
+    }
+
+    // --- Risk factor: sensitive device type inferred from name ---
+    if (localName.indexOf("Tracker")  != -1 ||
+        localName.indexOf("Tag")      != -1 ||
+        localName.indexOf("Medical")  != -1 ||
+        localName.indexOf("Security") != -1) {
+        isSecurityOrTrackingDevice = true;
+    }
+
+    // --- Manufacturer data: decode ID, name, iBeacon ---
+    if (device->haveManufacturerData()) {
+        std::string mfg = device->getManufacturerData();
+
+        if (mfg.size() >= 2) {
+            manufacturerId   = (uint8_t)mfg[1] << 8 | (uint8_t)mfg[0];
+        }
+        manufacturerName = getManufacturerName(manufacturerId);
+        DeviceContext::xpManager.awardXP(2.0f);  // +2.0 XP: manufacturer data decoded
+
+        // ← DEBUG: rear Bytes output, to detect CT-Byte
+        /*
+        if (manufacturerId == 0x004C) {
+            String hexDump = "";
+            for (size_t i = 0; i < mfg.size(); i++) {
+                char buf[4];
+                snprintf(buf, sizeof(buf), "%02X ", (uint8_t)mfg[i]);
+                hexDump += buf;
+            }
+            LOG(LOG_TARGET, devTag + "DEBUG Apple mfg data (" + String(mfg.size()) + " bytes): " + hexDump);
+        }*/
+        
+        // ============================================================
+        // META RAY-BAN DETECTION
+        // ============================================================
+        uint8_t metaConfidence = MetaGlasses::detectMetaGlasses(
+            device, localName, manufacturerId);
+        
+        if (metaConfidence > 0) {
+            MetaGlasses::processMetaGlasses(
+                device, devTag, address.c_str(), localName, manufacturerId);
+            
+            // Mark as high-value target if confident
+            if (MetaGlasses::isHighValueTarget(metaConfidence)) {
+                isSecurityOrTrackingDevice = true;
+                ScanContext::susDevice++;
+                DeviceContext::xpManager.awardXP(5.0f);  // +5 XP for Meta glasses
+                
+                // Show speech bubble
+                nibblesSpeechShowCustom("Meta Glasses!");
+            }
+        }
+
+        // ============================================================
+        // APPLE FIND MY TRACKER DETECTION
+        // ============================================================
+        bool isOfflineFinding = false;
+        if (detectAppleFindMy(mfg, isOfflineFinding)) {
+            DeviceContext::xpManager.awardXP(3.0f);
+
+            if (isOfflineFinding) {
+                float estDist = powf(10.0f, (float)(DISTANCE_CONSTANT - ScanContext::rssi.load()) / (float)RSSI_CONSTANT);
+
+                String indent = StringUtils::indentFromTag(devTag);
+                LOG(LOG_TARGET, devTag + "Find My Tracker detected (offline finding mode)\n"
+                    + indent + " Address:  " + String(ScanContext::addrStr.c_str()) + "\n"
+                    + indent + " RSSI:     " + String(ScanContext::rssi.load()) + " dBm\n"
+                    + indent + " Distance: ~" + String(estDist, 2) + " m");
+
+                // Debug: Manufacturer-Bytes if offline tracker found
+                String hexDump = "";
+                for (size_t i = 0; i < mfg.size(); i++) {
+                    char buf[4];
+                    snprintf(buf, sizeof(buf), "%02X ", (uint8_t)mfg[i]);
+                    hexDump += buf;
+                }
+                LOG(LOG_TARGET, indent + " Raw data (" + String(mfg.size()) + " bytes): " + hexDump);
+
+                // Decode the offline-finding payload (skip the 4-byte
+                // "4C 00 12 19" company ID / type / length header).
+                if (mfg.size() >= 4 + 25) {
+                    const uint8_t* payloadStart =
+                        reinterpret_cast<const uint8_t*>(mfg.data()) + 4;
+
+                    FindMyPayload payload = parseFindMyPayload(payloadStart, mfg.size() - 4);
+                    LOG(LOG_TARGET, findMyDecodedSummary(payload, devTag));
+                }
+
+                isSecurityOrTrackingDevice = true;
+                ScanContext::susDevice++;
+                DeviceContext::xpManager.awardXP(5.0f);
+
+                SusLog::add("Find My Tracker", ScanContext::addrStr.c_str(), (int8_t)ScanContext::rssi.load());
+
+                auto* ms = MenuController::getState();
+                if (ms->audioEnabled && ms->audioSuspicious) {
+                    M5.Speaker.setVolume(MenuController::getAlarmVolume());
+                    M5.Speaker.tone(1200, 150);
+                    while (M5.Speaker.isPlaying()) { delay(5); }
+                    M5.Speaker.tone(1200, 150);
+                }
+
+                nibblesSpeechShowCustom("Tracker?!");
+            } else {
+                LOG(LOG_GATT, devTag + "Apple Find My beacon (online device)");
+            }
+        }
+
+        // ============================================================
+        // IBEACON DETECTION
+        // ============================================================
+        beacon = parseIBeacon(mfg);
+        if (beacon.valid) {
+            isIBeacon = true;
+            ScanContext::beaconsFound++;
+            DeviceContext::xpManager.awardXP(3.0f);  // +3.0 XP: iBeacon parsed
+
+            LOG(LOG_BEACON, devTag + "iBeacon detected!\n"
+                "   UUID:  " + String(beacon.uuid.c_str()) + "\n"
+                "   Major: " + String(beacon.major) + "\n"
+                "   Minor: " + String(beacon.minor) + "\n"
+                "   TX:    " + String(beacon.txPower));
+
+            // Tesla vehicles use a known iBeacon UUID
+            if (String(beacon.uuid.c_str()).equalsIgnoreCase(TESLA_IBEACON_UUID)) {
+                LOG(LOG_TARGET, devTag + "Tesla iBeacon detected: " + String(beacon.uuid.c_str()));
+            }
+        }
+
+        if (manufacturerName.isEmpty()) {
+            isUnknownManufacturer = true;
+        }
+    }
+
+    // ============================================================
+    // DRONE - SDO DETECTION
+    // ============================================================
+    int svcCountSdo = device->getServiceUUIDCount();
+    for (int s = 0; s < svcCountSdo; s++) {
+        NimBLEUUID svcUUID = device->getServiceUUID(s);
+        uint16_t uuid16;
+        if (SdoHandlers::extract16BitUUID(svcUUID, uuid16)) {
+            SdoResult result;
+            if (SdoServiceParser::parse(uuid16, result)) {
+                // Kontext mitgeben für Drone-Alert
+                SdoContext ctx;
+                ctx.rssi = ScanContext::rssi.load();
+                ctx.mac  = ScanContext::addrStr.c_str();
+                ctx.name = localName.c_str();
+                ctx.serviceData    = nullptr;
+                ctx.serviceDataLen = 0;
+
+                LOG(LOG_GATT, devTag + "[DRONE] " + String(result.name));
+
+                if (result.uuid == 0xFFFA) SdoHandlers::handleDrone(&ctx);
+                if (result.uuid == 0xFFFD) SdoHandlers::handleFido(&ctx);
+                if (result.uuid == 0xFFF6) SdoHandlers::handleMatter(&ctx);
+            }
+        }
+    }
+
+    // ============================================================
+    // FLOCK CAMERA DETECTION
+    // ============================================================
+    FlockDetection::FlockResult flock = FlockDetection::detect(
+        device, localName, manufacturerId);
+
+    if (flock.detected) {
+        FlockDetection::logDetection(devTag, flock,
+            ScanContext::addrStr.c_str(),
+            ScanContext::rssi.load());
+
+        // To Exposure Scoring
+        ScanContext::susDevice++;
+        DeviceContext::xpManager.awardXP(5.0f);  // +5 XP: surveillance device
+        delay(1000);
+
+        // ← Audio alert
+        auto* ms = MenuController::getState();
+        if (ms->audioEnabled && ms->audioFlock) {
+            M5.Speaker.setVolume(MenuController::getAlarmVolume());
+            M5.Speaker.tone(440, 300);   // tiefer Ton = Warnung
+            while (M5.Speaker.isPlaying()) { delay(5); }
+            M5.Speaker.tone(440, 300);
+            while (M5.Speaker.isPlaying()) { delay(5); }
+            M5.Speaker.tone(440, 300);
+        }
+
+        // NibBLEs warning the user by tone if it is activated in the UI
+        nibblesSpeechShowCustom("Flock cam!");
+
+        if (!UIContext::isAngryTaskRunning.load()) { 
+            UIContext::isAngryTaskRunning.store(true);
+
+            if (xTaskCreatePinnedToCore( showAngryExpressionTask, "FlockWarn", 4096, nullptr, 5, &UIContext::angryTaskHandle, 1) != pdPASS)
+            {
+                UIContext::isAngryTaskRunning.store(false);
+                UIContext::angryTaskHandle = nullptr;
+                LOG(LOG_SYSTEM, "Failed to create FlockWarn task");
+            }
+        }
+    }
+
+    // --- Custom service UUID → likely proprietary protocol ---
+    std::string serviceUuid = device->getServiceUUID().toString();
+    if (!serviceUuid.empty()) {
+        if (serviceUuid.length() > 8 && serviceUuid.find("0000") != 0) {
+            hasCustomService = true;
+            proprietary      = true;
+        }
+    }
+
+    // --- Advertised service UUIDs ---
+    int svcCount = device->getServiceUUIDCount();
+    if (svcCount > 0) {
+        String svcLog = devTag + "Advertised services (" + String(svcCount) + "):";
+
+        for (int s = 0; s < svcCount; s++) {
+            serviceSummary.clear();
+            NimBLEUUID svcUUID  = device->getServiceUUID(s);
+            String     shortUUID = svcUUID.toString().c_str();
+
+            // NimBLE prefixes 16-bit UUIDs with "0x" — strip it
+            if (shortUUID.startsWith("0x")) shortUUID = shortUUID.substring(2);
+            String indent = StringUtils::indentFromTag(devTag);
+            svcLog += "\n" + indent + " - " + shortUUID + " (" + getServiceName(shortUUID) + ")";
+
+            String serviceName = getServiceName(shortUUID);
+            const String SERVICE_INDENT = indent + "          ";
+
+            if (!serviceName.isEmpty()) {
+            if (!serviceSummary.isEmpty())
+                serviceSummary += "\n" + SERVICE_INDENT;
+
+            serviceSummary += serviceName + " (" + shortUUID + ")";
+        }
+
+            // PwnBeacon detection via service UUID
+            if (svcUUID.equals(NimBLEUUID(PWNBEACON_SERVICE_UUID))) {
+                //isPwnBeacon = true;
+                DeviceContext::beaconsFound++;
+                //DeviceContext::pwnbeaconsFound++;
+
+                if (!heartTaskRunning.load()) {
+                    heartTaskRunning.store(true);
+
+                    if (xTaskCreatePinnedToCore( heartTask, "Heart", 2048, nullptr, 1, nullptr, 1) != pdPASS)
+                    {
+                        heartTaskRunning.store(false);
+                    }
+                }
+                LOG(LOG_BEACON, devTag + "PwnBeacon detected (service UUID)!");
+            }
+        }
+        LOG(LOG_GATT, svcLog);
+    }
+
+    // --- TX Power + distance estimate ---
+    if (device->haveTXPower()) {
+        int8_t advTxPower = device->getTXPower();
+        String txLog      = devTag + "Adv TX power: " + String(advTxPower) + " dBm";
+
+        float estDist = estimateDistance(advTxPower, ScanContext::rssi.load());
+        if (estDist >= 0.0f) {
+            txLog += "\n   Est. distance (TX): ~" + String(estDist, 2) + " m";
+        }
+        LOG(LOG_SCAN, txLog);
+    }
+
+    // --- Advertisement service data (AD type 0x16) ---
+    int svcDataCount = device->getServiceDataCount();
+    if (svcDataCount > 0) {
+        String sdLog = devTag + "Service data (" + String(svcDataCount) + "):";
+
+        for (int sd = 0; sd < svcDataCount; sd++) {
+            NimBLEUUID  svcDataUUID = device->getServiceDataUUID(sd);
+            std::string svcData     = device->getServiceData(sd);
+            String      shortUUID   = svcDataUUID.toString().c_str();
+            String      indent      = StringUtils::indentFromTag(devTag);
+
+            if (shortUUID.startsWith("0x")) shortUUID = shortUUID.substring(2);
+
+            sdLog += "\n" + indent + "- UUID: " + shortUUID
+                   + " (" + getServiceName(shortUUID) + ")"
+                   + "\n" + indent + "Data: " + bytesToHexString(svcData);
+
+            // UUID extrahieren
+            uint16_t uuid16 = 0;
+            bool hasUuid16 = SdoHandlers::extract16BitUUID(svcDataUUID, uuid16);
+
+            // SDO-Check (nur für 16-bit UUIDs >= 0xFFF0)
+            if (hasUuid16) {
+                SdoResult result;
+                if (SdoServiceParser::parse(uuid16, result)) {
+                    LOG(LOG_GATT, devTag + "[SDO] " + String(result.name));
+
+                    SdoContext ctx;
+                    ctx.rssi           = ScanContext::rssi.load();
+                    ctx.mac            = ScanContext::addrStr.c_str();
+                    ctx.name           = localName.c_str();
+                    ctx.serviceData    = (const uint8_t*)svcData.data();
+                    ctx.serviceDataLen = svcData.size();
+
+                    if (result.uuid == 0xFFFA) SdoHandlers::handleDrone(&ctx);
+                    if (result.uuid == 0xFFFD) SdoHandlers::handleFido(&ctx);
+                    if (result.uuid == 0xFFF6) SdoHandlers::handleMatter(&ctx);
+                }
+            }    
+
+            // ============================================================
+            // GOOGLE FIND MY DEVICE (FMDN) TRACKER DETECTION
+            // Passive: Moto Tag / Novoo / Chipolo broadcast under Eddystone
+            // UUID 0xFEAA with frame byte 0x40 (normal) / 0x41 (unwanted).
+            // ============================================================
+            if (hasUuid16) {
+                FmdnParser::FmdnResult fmdn = FmdnParser::parse(
+                    uuid16, (const uint8_t*)svcData.data(), svcData.size());
+
+                if (fmdn.detected) {
+                    const char* fmdnLabel = fmdn.unwantedTracking
+                        ? "FMDN Unwanted Track"     // 0x41 – separated tracker
+                        : "Google Find My";         // 0x40 – owner nearby
+                    
+                    String indent = StringUtils::indentFromTag(devTag);
+                    LOG(LOG_TARGET, devTag + "Google Find My tracker detected"
+                        + (fmdn.unwantedTracking ? " (UNWANTED TRACKING MODE)" : "")
+                        + "\n" + indent + "Address:  " + String(ScanContext::addrStr.c_str())
+                        + "\n" + indent + "RSSI:     " + String(ScanContext::rssi.load()) + " dBm");
+
+                    isSecurityOrTrackingDevice = true;
+                    ScanContext::susDevice++;
+                    DeviceContext::xpManager.awardXP(fmdn.unwantedTracking ? 5.0f : 3.0f);
+
+                    SusLog::add(fmdnLabel, ScanContext::addrStr.c_str(),
+                                (int8_t)ScanContext::rssi.load());
+
+                    nibblesSpeechShowCustom(fmdn.unwantedTracking ? "Stalker?!" : "FindMy tag");
+                }
+            }
+
+            /*
+            // PwnBeacon service data payload
+            if (svcDataUUID.equals(NimBLEUUID(PWNBEACON_SERVICE_UUID))) {
+                pwnBeacon = PwnBeaconServiceHandler::parseAdvertisement(
+                    (const uint8_t*)svcData.data(), svcData.length());
+
+                if (pwnBeacon.valid) {
+                    isPwnBeacon = true;
+                    DeviceContext::xpManager.awardXP(1.0f);  // +1.0 XP: PwnBeacon detected
+
+                    LOG(LOG_BEACON, devTag + "PwnBeacon detected!\n"
+                        "   Name:     " + pwnBeacon.name + "\n"
+                        "   Pwnd run: " + String(pwnBeacon.pwnd_run) + "\n"
+                        "   Pwnd tot: " + String(pwnBeacon.pwnd_tot) + "\n"
+                        "   FP:       " + PwnBeaconServiceHandler::fingerprintToString(pwnBeacon.fingerprint));
+                }
+            }
+            */
+        }
+        LOG(LOG_GATT, sdLog);
+    }
+
+    return true;
+}
+
+// ===========================================================================
+//  connectAndReadGATT
+//
+//  Connects to the device, discovers all GATT attributes, reads
+//  characteristics and descriptors, runs registered service handlers,
+//  and performs target detection.
+//
+//  Populates dev with connection-derived metadata.
+//  Returns true if a target device was detected (caller should break).
+// ===========================================================================
+static bool connectAndReadGATT(
+    const NimBLEAdvertisedDevice* device,
+    DeviceInfo&   dev,
+    bool&         hasWritableChar,
+    const String& devTag,
+    int           remaining)
+{
+    if (device->haveName()) dev.advHasName = true;
+
+    LOG(LOG_GATT, devTag + "Connected and discovered attributes: " + address);
+
+    // Run all registered GATT service handlers (DeviceInfo, Battery, etc.)
+    String serviceOutput = GATTServiceRegistry::runDiscoveredHandlers(pClient);
+
+    // Read 2A00 directly if localName is still empty
+    if (localName.isEmpty()) {
+        NimBLERemoteService* gasSvc = pClient->getService("1800");
+        if (gasSvc) {
+            NimBLERemoteCharacteristic* nameChr = gasSvc->getCharacteristic("2A00");
+            if (nameChr && nameChr->canRead()) {
+                std::string val = nameChr->readValue();
+                if (!val.empty() && isPrintableText(val)) {
+                    localName       = val.c_str();
+                    dev.name        = val;
+                    dev.gattHasName = true;
+                    //LOG(LOG_GATT, devTag + "DeviceName to LocalName: " + localName);
+                }
+            }
+        }
+    }
+
+    // After Registry-Run, before Security-Analyse:
+    // Short window if many devices in queue:
+    uint32_t captureMs = (remaining > 5) ? 1500 : 2500;
+    String notifySummary = NotifyHandler::subscribeAndCapture(pClient, captureMs);
+    if (!notifySummary.isEmpty()) {
+        LOG(LOG_NOTIFY, devTag + notifySummary);
+        dev.hasNotifyData = true;
+        dev.notifyCharCount  = NotifyHandler::lastNotifyCount();
+    }
+
+    // Cache Device Information Service result for downstream use
+    deviceInfoService = GATTServiceRegistry::getLastResult("180a");
+    if (!deviceInfoService.isEmpty()) dev.gattHasName = true;
+
+    ScanContext::targetConnects++;
+    DeviceContext::xpManager.awardXP(0.5f);  // +0.5 XP: GATT connection success
+
+    // Target-Erkennung wird nur GEMERKT, nicht sofort ausgelöst — die Schleife
+    // muss zuerst ALLE Services/Characteristics durchlaufen (JSON-Erkennung etc.),
+    // bevor reagiert und die Funktion verlassen wird.
+    String targetWasLabel;
+    bool targetWasFound = false;
+    bool isBiscuit = false;
+    bool isFlipper = false;
+    bool isTesla = false;
+
+    GATTFingerprint gattFingerprint;
+    gattFingerprint.reset();
+
+    // --- Iterate services and characteristics ---
+    for (auto svcIt = pClient->getServices().begin();
+         svcIt != pClient->getServices().end(); ++svcIt)
+    {
+        NimBLERemoteService* service     = *svcIt;
+        std::string          serviceUuid = service->getUUID().toString();
+
+        // ─────────────────────────────────────────────
+        // GATT Fingerprint - service
+        // ─────────────────────────────────────────────
+
+        gattFingerprint.services++;
+
+        if (serviceUuid.length() == 36) {
+            gattFingerprint.proprietaryServices++;
+        } else {
+            gattFingerprint.standardServices++;
+        }
+
+        ScanContext::uuidList.push_back(
+            "Service UUID: " + serviceUuid
+        );
+
+        ScanContext::uuidList.push_back("Service UUID: " + serviceUuid);
+
+        for (auto cIt = service->getCharacteristics().begin();
+             cIt != service->getCharacteristics().end(); ++cIt)
+        {
+            NimBLERemoteCharacteristic* characteristic = *cIt;
+            std::string charUuid = characteristic->getUUID().toString();
+
+            if (!characteristic) {
+                continue;
+            }
+
+            ScanContext::uuidList.push_back("Characteristic UUID: " + charUuid);
+
+            // ─────────────────────────────────────────────
+            // GATT Fingerprintparser Test
+            // ─────────────────────────────────────────────
+            gattFingerprint.characteristics++;
+            const bool canRead = characteristic->canRead();
+            const bool canWrite = characteristic->canWrite() || characteristic->canWriteNoResponse();
+            const bool canNotify = characteristic->canNotify();
+            const bool canIndicate = characteristic->canIndicate();
+
+            if (canRead && canWrite) {
+                gattFingerprint.readWrite++;
+            }
+            else if (canRead) {
+                gattFingerprint.read++;
+            }
+            else if (canWrite) {
+                gattFingerprint.write++;
+            }
+
+            if (canNotify) {
+                gattFingerprint.notify++;
+            }
+
+            if (canIndicate) {
+                gattFingerprint.indicate++;
+            }
+
+            // Existing code
+            if (charUuid == UUID_MODEL_NUMBER)
+                dev.gattHasModelInfo = true;
+
+            if (charUuid == UUID_MANUFACTURER_NAME ||
+                charUuid == UUID_SERIAL_NUMBER)
+            {
+                dev.gattHasIdentityInfo = true;
+            }
+
+            // Existing writable tracking
+            if (canWrite) {
+                hasWritableChar = true;
+            }
+
+            // FINGERPRINT PARSER TEST
+
+            // Flag device info fields found via GATT
+            if (charUuid == UUID_MODEL_NUMBER)                            dev.gattHasModelInfo    = true;
+            if (charUuid == UUID_MANUFACTURER_NAME || charUuid == UUID_SERIAL_NUMBER) dev.gattHasIdentityInfo = true;
+
+            // Track writable characteristics
+            if (characteristic->canWrite() || characteristic->canWriteNoResponse()) {
+                hasWritableChar = true;
+            }
+
+            // Read User Description descriptor (0x2901) for human-readable label
+            NimBLERemoteDescriptor* userDesc = characteristic->getDescriptor(NimBLEUUID("2901"));
+            if (userDesc) {
+                std::string descValue = userDesc->readValue();
+                while (!descValue.empty() && descValue.back() == '\0') {
+                    descValue.pop_back();
+                }
+                if (!descValue.empty() && isPrintableText(descValue)) {
+                    LOG(LOG_GATT, devTag + "Descriptor [" + String(charUuid.c_str()) + "]: " + String(descValue.c_str()));
+                    ScanContext::nameList.push_back(descValue);
+                    DeviceContext::xpManager.awardXP(1.0f);  // +1.0 XP: known characteristic decoded
+                }
+            }
+
+            // Read characteristic value — only process printable ASCII
+            std::string rawValue = characteristic->readValue();
+
+            while (!rawValue.empty() && rawValue.back() == '\0') {
+                rawValue.pop_back();
+            }
+
+            // Binärformat-Erkennung — läuft unabhängig davon, ob der Rest "printable" ist
+            String binaryFormat = detectBinaryFormat(rawValue);
+            if (!binaryFormat.isEmpty()) {
+                LOG(LOG_GATT, devTag + "  Char [" + String(charUuid.c_str()) + "] (len=" +
+                    String(rawValue.size()) + "): [" + binaryFormat + "]");
+            }
+
+            if (!rawValue.empty() && isPrintableText(rawValue)) {
+                dev.gattHasName = true;
+                ScanContext::nameList.push_back(rawValue);
+
+                bool alreadyDumped = !GATTServiceRegistry::getLastResult(serviceUuid).isEmpty();
+
+                if (!alreadyDumped) {
+                    //LOG(LOG_GATT, devTag + "  Char [" + String(charUuid.c_str()) + "] ASCII: " + String(rawValue.c_str()));
+                    //delay(10);  // allow log to flush before next read
+                    LOG(LOG_SNIFFED, devTag + "ASCII: " + String(rawValue.c_str()));
+                }
+
+                if (isLikelyJson(rawValue)) {
+                    //LOG(LOG_GATT, devTag + "  [JSON]: " + String(rawValue.c_str()));
+                    //delay(10);
+                    LOG(LOG_SNIFFED, devTag + "JSON:  " + String(rawValue.c_str()));
+                    DeviceContext::xpManager.awardXP(1.5f);
+                }
+
+                if (looksLikePersonalName(rawValue)) {
+                    dev.gattHasPersonalName = true;
+                    if (dev.possibleOwnerName.empty()) {
+                        std::string ownerName = extractPossibleOwnerName(rawValue);
+                        if (!ownerName.empty()) {
+                            dev.possibleOwnerName = ownerName;
+                        }
+                    }
+                }
+                if (looksLikeIdentityData(rawValue))    dev.gattHasIdentityInfo = true;
+                if (looksLikeEnvironmentName(rawValue)) dev.gattHasEnvironmentName = true;
+            }
+        }
+
+        // Refresh local name from device if available
+        if (device != nullptr && !device->getName().empty()) {
+            localName = device->getName().c_str();
+        }
+
+        if (isTeslaDevice("", serviceUuid.c_str())) {
+            isTesla = true;
+        }
+
+        if (isXiaoBiscuitDevice(localName, serviceUuid.c_str())) {
+            isBiscuit = true;
+        }
+
+        if (isFlipperDevice(serviceUuid.c_str())) {
+            isFlipper = true;
+        }
+
+        // --- Known / suspicious target detection ---
+        // Nur MERKEN — Schleife läuft weiter, damit alle Services vollständig
+        // verarbeitet werden, bevor reagiert wird.
+        if (!targetWasFound) {
+            String targetLabel;
+            if (isTargetDevice(localName.c_str(), address.c_str(),
+                            serviceUuid.c_str(), deviceInfoService.c_str(), targetLabel)) {
+                targetWasFound = true;
+                targetWasLabel = targetLabel;
+            }
+        }
+    }
+
+    if (isBiscuit) {
+        //LOG(LOG_TARGET, devTag + "Xiao Biscuit detected via GATT service");
+        nibblesSpeechShowCustom(biscuitMsgs[random(BISCUIT_MSG_COUNT)]);
+    }
+
+    if (isFlipper) {
+        //LOG(LOG_TARGET, devTag + "Flipper Zero detected via GATT service");
+        nibblesSpeechShowCustom(flipperMsgs[random(FLIPPER_MSG_COUNT)]);
+    }
+
+    if (isTesla) {
+        //LOG(LOG_TARGET, devTag + "Tesla vehicle detected via GATT service");
+        nibblesSpeechShowCustom(teslaMsgs[random(TESLA_MSG_COUNT)]);
+    }
+
+    // Fallback / cross-check: NotifyHandler::lastNotifyCount() only counts
+    if (dev.hasNotifyData && dev.notifyCharCount == 0 && gattFingerprint.notify > 0) {
+        dev.notifyCharCount = gattFingerprint.notify;
+    }
+
+    // --- Erst NACH vollständiger Iteration über ALLE Services reagieren ---
+    if (targetWasFound) {
+        ScanContext::targetFound = true;
+        ScanContext::susDevice++;
+        DeviceContext::xpManager.awardXP(2.0f);  // +2.0 XP: suspicious device found
+
+        SusLog::add(targetWasLabel.c_str(), address.c_str(), (int8_t)ScanContext::rssi.load());
+
+        // ← Audio alert
+        auto* ms = MenuController::getState();
+        if (ms->audioEnabled && ms->audioSuspicious) {
+            M5.Speaker.setVolume(MenuController::getAlarmVolume());
+            M5.Speaker.tone(1800, 160);
+            while (M5.Speaker.isPlaying()) { delay(5); }
+            M5.Speaker.tone(1400, 180);
+            while (M5.Speaker.isPlaying()) { delay(5); }
+            M5.Speaker.tone(1000, 200);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        if (!UIContext::isAngryTaskRunning.load() && NetworkContext::displayEnabled)
+        {
+            UIContext::isAngryTaskRunning.store(true);
+
+            if (xTaskCreatePinnedToCore(showAngryExpressionTask, "AngryFace", 4096, nullptr, 5, &UIContext::angryTaskHandle, 1) != pdPASS)
+            {
+                LOG(LOG_SYSTEM, "Failed to create AngryFace task");
+                UIContext::isAngryTaskRunning.store(false);
+                UIContext::angryTaskHandle = nullptr;
+            }
+        }
+
+        return true;  // target found for this device
+    }
+
+    LOG(LOG_GATT,gattFingerprint.toString());
+
+    return false;  // no target found — continue
+}
+
+// ===========================================================================
+//  handleExposureResult
+//
+//  Logs the full exposure / privacy analysis result, then clears all
+//  temporary per-device string lists to free RAM for the next device.
+// ===========================================================================
+static void handleExposureResult(
+    const ExposureResult& exposure,
+    String&       manufacturerName,
+    const String& devTag)
+{
+    String privLog = devTag + "Exposure summary\n"
+        "   Device type:        " + String(exposure.deviceType.c_str()) + "\n"
+        "   Identity exposure:  " + String(exposure.identityExposure.c_str()) + "\n"
+        "   Tracking risk:      " + String(exposure.trackingRisk.c_str()) + "\n"
+        "   Privacy level:      " + String(exposure.privacyLevel.c_str()) + "\n"
+        "   Exposure tier:      " + tierToString(exposure.exposureTier) + "\n"
+        "   Reasons:";
+
+    for (auto& r : exposure.reasons) {
+        privLog += "\n    - " + String(r.c_str());
+    }
+    privLog += "\n----------------------------------";
+    LOG(LOG_PRIVACY, privLog);
+
+    // Clear per-device temporary data to prevent leaking into next scan entry
+    ScanContext::uuidList.clear();
+    ScanContext::nameList.clear();
+    localName.clear();
+    manufacturerName.clear();
+    deviceInfoService.clear();
+}
+
+// ===========================================================================
+//  scanForDevices
+//
+//  Main scan loop — called from scanTask() on Core 1.
+//
+//  Flow:
+//    1. Start passive NimBLE scan (4 seconds)
+//    2. Restart PwnBeacon advertising (scanning pauses it)
+//    3. For each discovered device:
+//       a. parseDeviceInfo()   — advertisement layer
+//       b. Privacy / exposure analysis
+//       c. Connect + readGATT  — if signal strong enough
+//       d. Security analysis
+//       e. Full exposure analysis + logging
+//       f. Wardriving GPS log  — if enabled and GPS fix available
+//    4. Print scan summary
+//    5. Save XP to SD card
+// ===========================================================================
+void scanForDevices() {
+    DeviceInfo dev;
+    uint16_t   manufacturerId   = 0;
+    String     manufacturerName = "Unknown";
+
+    // ============================================================
+    // OPTIONAL: Reset statistics
+    // ============================================================
+    MetaGlasses::resetStats();
+
+    ScanContext::scanIsRunning.store(true);
+
+    // --- Configure and run NimBLE scan ---
+    NimBLEScan* pScan = NimBLEDevice::getScan();
+    if (pScan == nullptr) {
+        LOG(LOG_SYSTEM, "Scan instance creation failed.");
+        ScanContext::scanIsRunning.store(false);
+        return;
+    }
+
+    pScan->clearResults();
+    pScan->setActiveScan(UIContext::isResearchModeActive.load()); // set by research mode that user device to active scan for more aggressive fingerprinting
+    pScan->setPhy(NimBLEScan::Phy::SCAN_1M);
+    pScan->setInterval(BLE_SCAN_INTERVAL);
+    pScan->setWindow(BLE_SCAN_WINDOW);
+    delay(100);  // brief stability delay before scan
+
+    NimBLEScanResults results = pScan->getResults(4000);  // 4-second scan window
+
+    // Restart PwnBeacon advertising (NimBLE stops advertising during scan)
+    //PwnBeaconServiceHandler::updateCounters(
+    //    ScanContext::targetConnects.load(),
+    //    ScanContext::allSpottedDevice.load());
+
+    // Brief advertising window before processing — lets peers discover us
+    vTaskDelay(pdMS_TO_TICKS(ADV_WINDOW_MS));
+
+    if (results.getCount() == 0) {
+        LOG(LOG_SCAN, "No devices found.");
+        ScanContext::scanIsRunning.store(false);
+        return;
+    }
+
+    LOG(LOG_SCAN, "Devices found: " + String(results.getCount()));
+    nibblesSpeechNotifyEvent();
+
+    // ===================================================================
+    //  Per-device processing loop
+    // ===================================================================
+    for (int i = 0; i < results.getCount(); i++) {
+        serviceSummary.clear();
+        // ── Cooporative abort — someone with exclusive access requested ──
+        if (ScanContext::scanCancelRequested.load()) {
+            LOG(LOG_SCAN, "Scan cancelled mid-loop (" + String(i) + "/" + String(results.getCount()) + " devices processed)");
+            break;
+        }
+
+        // Reset per-device state
+        ScanContext::targetFound = false;
+
+        dev = {};
+        displayName.clear();
+        const NimBLEAdvertisedDevice* device = results.getDevice(i);
+
+        // --- Per-device risk flags (reset each iteration) ---
+        bool hasCustomService           = false;
+        bool hasWeakName                = false;
+        bool isUnknownManufacturer      = false;
+        bool isSecurityOrTrackingDevice = false;
+        bool hasWritableChar            = false;
+        bool proprietary                = false;
+        bool isIBeacon                  = false;
+        //bool isPwnBeaconDevice          = false;
+        int  devSessionId               = 0;
+
+        IBeaconInfo   beacon;
+        //PwnBeaconInfo pwnBeacon;
+
+        // --- Advertisement layer parsing + early filters ---
+        if (!parseDeviceInfo(device, manufacturerId, manufacturerName,
+                             isIBeacon, beacon, hasCustomService, hasWeakName,
+                             isUnknownManufacturer, isSecurityOrTrackingDevice,
+                             proprietary, devSessionId)) {
+            continue;
+        }
+
+        String devTag = "[#" + String(devSessionId) + "] ";
+
+        // Timestamp via GPS if wardriving is enabled and a valid GPS fix is available
+        logGpsTimestampToActiveCategories(devTag);
+
+        // Raw advertisement payload for privacy/flag analysis
+        std::vector<uint8_t> payloadVec = device->getPayload();
+        std::string          advData(payloadVec.begin(), payloadVec.end());
+
+        // --- Advertisement flags security analysis (AD type 0x01) ---
+        std::vector<SecurityFinding> advFindings;
+        analyzeAdvFlags(payloadVec, dev, advFindings);
+        if (!advFindings.empty()) {
+            String advSecLog = devTag + "Adv security flags:";
+            for (auto& f : advFindings) {
+                advSecLog += "\n   [" + String(f.severity.c_str()) + "] "
+                           + String(f.description.c_str());
+            }
+            LOG(LOG_SECURITY, advSecLog);
+        }
+
+        // --- Privacy analysis (MAC type, cleartext, rotating address) ---
+        bool isPublicAddrType =(device->getAddress().getType() == BLE_ADDR_PUBLIC);
+
+        handleDevicePrivacy(
+            std::string(localName.c_str()),
+            ScanContext::addrStr,
+            advData,
+            payloadVec,
+            ScanContext::is_connectable,
+            isPublicAddrType,
+            dev,
+            devTag);
+
+        // --- Apple model resolution ---
+        // Scan nameList for Apple model identifiers (e.g. "iPhone17,3")
+        String modelIdentifier;
+        for (const auto& n : ScanContext::nameList) {
+            String s = n.c_str();
+            if ((s.startsWith("iPhone") || s.startsWith("iPad") || s.startsWith("Mac"))
+                && s.indexOf(",") != -1) {
+                modelIdentifier = s;
+                break;
+            }
+        }
+
+        ScanContext::allSpottedDevice++;
+        DeviceContext::xpManager.awardXP(0.1f);  // +0.1 XP: new device discovered
+
+        // --- Tesla detection from advertisement name (no connection needed) ---
+        if (isTeslaDevice(localName, "")) {
+            LOG(LOG_TARGET, devTag + "Tesla vehicle detected: " + localName);
+            String teslaMsg = localName.startsWith("Tesla ") ? localName : "Tesla found!";
+            nibblesSpeechShowCustom(teslaMsg.c_str());
+        }
+
+        // --- Xiao Biscuit detection via GATT service UUID ---
+        if (isXiaoBiscuitDevice(localName, "")) {
+            LOG(LOG_TARGET, devTag + "Xiao Biscuit detected: " + localName);
+            nibblesSpeechShowCustom(biscuitMsgs[random(BISCUIT_MSG_COUNT)]);
+        }
+
+        if (!ScanContext::is_connectable) {
+            LOG(LOG_SCAN, devTag + "Device is not connectable.");
+        }
+
+        // --- RSSI threshold: skip GATT connection for weak signals ---
+        int  currentRSSI   = ScanContext::rssi.load();
+        bool shouldConnect = (currentRSSI >= RSSI_CONNECT_THRESHOLD);
+
+        if (!shouldConnect) {
+            LOG(LOG_SCAN, devTag + "Weak signal — scan only, no connect: "
+                + String(currentRSSI) + " dBm");
+
+            // Still run a bare-minimum exposure analysis with advertisement data
+            dev.isConnectable = false;
+            ExposureResult exposure = analyzeExposure(dev);
+            handleExposureResult(exposure, manufacturerName, devTag);
+
+            WebSender::sendDevice(dev, devSessionId, currentRSSI, isIBeacon, dev.hasNotifyData);
+
+            // Sad expression: device visible but unreachable
+            if (!UIContext::isAngryTaskRunning.load() && !UIContext::isSadTaskRunning.load())
+            {
+                UIContext::isSadTaskRunning.store(true);
+
+                if (xTaskCreatePinnedToCore( showSadExpressionTask, "SadFace", 4096, nullptr, 3, &UIContext::sadTaskHandle, 1) != pdPASS)
+                {
+                    LOG(LOG_SYSTEM, "Failed to create SadFace task");
+                    UIContext::isSadTaskRunning.store(false);
+                    UIContext::sadTaskHandle = nullptr;
+                }
+            }
+            continue;
+        }
+
+        // --- Reactive registry cleanup before allocating a new client ---
+        if (registry.size() >= MAX_SEEN_DEVICES || ESP.getFreeHeap() < MIN_FREE_HEAP_BYTES) {
+            LOG(LOG_SYSTEM, "Clearing registry (size: " + String(registry.size())
+                + ", free heap: " + String(ESP.getFreeHeap()) + ")");
+            registry.clear();
+            ScanContext::deviceSessionMap.clear();
+        }
+
+        // --- Create NimBLE client ---
+        pClient = NimBLEDevice::createClient();
+        if (!pClient) {
+            LOG(LOG_SYSTEM, "Failed to create BLE client — skipping device.");
+            continue;
+        }
+        pClient->setConnectTimeout(3 * 1000);  // 3-second connection timeout
+
+        vTaskDelay(pdMS_TO_TICKS(200));  // brief delay for stable connection
+
+        // ---------------------------------------------------------------
+        //  GATT connection branch
+        // ---------------------------------------------------------------
+        if (ScanContext::is_connectable && pClient->connect(*device)) {
+            // get Device scan count
+            int remaining = results.getCount() - i;
+
+            // MTU-Verhandlung — Standard ist nur 23 Bytes (20 nutzbar),
+            // viele Geräte unterstützen deutlich mehr für lange Characteristics
+            uint16_t negotiatedMTU = pClient->getMTU();
+            LOG(LOG_GATT, devTag + "Default MTU: " + String(negotiatedMTU));
+ 
+
+            if (pClient->discoverAttributes()) {
+                // --- Full GATT read + target detection ---
+                bool targetDetected = connectAndReadGATT(device, dev, hasWritableChar, devTag, remaining);
+                if (!targetDetected) {
+                    //LOG(LOG_GATT, devTag + "No target detected via GATT: " + address);
+                }
+
+                // Debug Lines for FreeRTOS
+                Serial.printf("ScanTask stack high-water mark: %u bytes free (min ever seen)\n",
+                    uxTaskGetStackHighWaterMark(NULL));
+
+                // ============================================================
+                // META RAY-BAN GATT SERVICE CHECK
+                // ============================================================
+                uint8_t metaAdConfidence = MetaGlasses::detectMetaGlasses(device, localName, manufacturerId);
+
+                if (metaAdConfidence > 0 && MetaGlasses::hasMetaGATTService(pClient)) {
+                    LOG(LOG_TARGET, devTag + "  Meta Ray-Ban GATT service confirmed!");
+                    
+                    String generation = MetaGlasses::detectGeneration(localName, true);
+                    String model = MetaGlasses::extractModelName(localName);
+                    
+                    LOG(LOG_TARGET, devTag + "   Generation: " + generation);
+                    LOG(LOG_TARGET, devTag + "   Model: " + model);
+                    
+                    // Mark as suspicious target
+                    ScanContext::targetFound = true;
+                    ScanContext::susDevice++;
+                    DeviceContext::xpManager.awardXP(10.0f);
+                    delay(1000);
+
+                    auto* ms = MenuController::getState();
+                    if (ms->audioEnabled && ms->audioEvilMode) {
+                        M5.Speaker.setVolume(MenuController::getAlarmVolume());
+                        M5.Speaker.tone(523, 100);
+                        while (M5.Speaker.isPlaying()) { delay(5); }
+                        M5.Speaker.tone(659, 100);
+                        while (M5.Speaker.isPlaying()) { delay(5); }
+                        M5.Speaker.tone(784, 100);
+                        while (M5.Speaker.isPlaying()) { delay(5); }
+                        M5.Speaker.tone(1047, 200);
+                    }
+                    
+                    nibblesSpeechShowCustom("Recording?");
+                    
+                    if (!UIContext::isAngryTaskRunning.load()) {
+                        if (xTaskCreatePinnedToCore(showAngryExpressionTask, "MetaWarning",
+                            4096, NULL, 5, &UIContext::angryTaskHandle, 1) != pdPASS) {
+                            LOG(LOG_SYSTEM, "Failed to create MetaWarning task");
+                            UIContext::isAngryTaskRunning.store(false);
+                        }
+                    }
+                    
+                    vTaskDelay(pdMS_TO_TICKS(3000));
+                }
+
+                // --- Apple model resolution ---
+                // Scan nameList for Apple model identifiers (e.g. "iPhone17,3")
+                String modelIdentifier;
+                for (const auto& n : ScanContext::nameList) {
+                    String s = n.c_str();
+                    if ((s.startsWith("iPhone") || s.startsWith("iPad") || s.startsWith("Mac"))
+                        && s.indexOf(",") != -1) {
+                        modelIdentifier = s;
+                        break;
+                    }
+                }
+
+                String modelName;
+                if (!modelIdentifier.isEmpty()) {
+                    modelName    = getAppleModelName(modelIdentifier);
+                    displayName  = modelName;
+                    dev.displayName = std::string(modelName.c_str()); 
+                } else if (manufacturerName == "Apple Inc.") {
+                    modelName         = "Apple Device";
+                    dev.displayName   = "Apple Device";
+                    dev.name          = localName.c_str();
+                } else {
+                    dev.name          = localName.c_str();
+                } 
+                dev.manufacturer  = manufacturerName.c_str();
+
+                // --- Build and log device info summary ---
+                String indent = StringUtils::indentFromTag(devTag);
+                String infoLogParsed =
+                    devTag + "Device info\n" +
+                    indent + "Address:" + address + "\n" +
+                    indent + "Name:   " + localName + "\n" +
+                    indent + "Manuf.: " + manufacturerName;
+
+                if (!modelName.isEmpty()) {
+                    infoLogParsed += "\n" + indent + "Model:  " + modelName;
+                }
+
+                if (!serviceSummary.isEmpty()) {
+                    infoLogParsed += "\n" + indent + "Service: " + serviceSummary;
+                }
+
+                LOG(LOG_SNIFFED, infoLogParsed);
+
+                // Log connection info to ConnectedLog
+                ConnectedLog::add(
+                    modelName.isEmpty() ? localName.c_str() : modelName.c_str(),
+                    ScanContext::addrStr.c_str(),
+                    (int8_t)currentRSSI,
+                    pClient->getConnHandle(),
+                    device->getAddress().getType()   // NEU — das war der fehlende Teil
+                );
+
+                String infoLogRaw = devTag + "Raw GATT:";
+                for (const auto& n : ScanContext::nameList) {
+                    if (!n.empty()) {
+                        infoLogRaw += "\n" + indent + "- " + String(n.c_str());
+                    }
+                }
+
+                float distance = powf(10.0f, (float)(DISTANCE_CONSTANT - currentRSSI) / (float)RSSI_CONSTANT);
+                infoLogRaw += "\n" + indent + "Distance: ~" + String(distance, 2) + " m"
+                        + "\n" + indent + "RSSI:     " + String(currentRSSI) + " dBm";
+                LOG(LOG_GATT, infoLogRaw);                
+
+                LOG(
+                    LOG_GATT, devTag + "Device PHY info\n" +
+                    devTag + "ADV TYPE: " + String(device->getAdvType()) +
+                    " | LEGACY: " +
+                    String(device->isLegacyAdvertisement() ? "YES" : "NO") +
+                    " | PHY: " +
+                    String(device->getPrimaryPhy()) + "/" +
+                    String(device->getSecondaryPhy())
+                );
+
+                // --- iBeacon details ---
+                if (isIBeacon) {
+                    DeviceContext::beaconsFound++;
+                    float beaconDist = estimateDistance(beacon.txPower, currentRSSI);
+                    LOG(LOG_BEACON, devTag + "Beacon type: iBeacon\n"
+                        "   UUID:     " + String(beacon.uuid.c_str()) + "\n"
+                        "   Major:    " + String(beacon.major) + "\n"
+                        "   Minor:    " + String(beacon.minor) + "\n"
+                        "   Distance: ~" + String(beaconDist, 2) + " m\n"
+                        "   RSSI:     " + String(currentRSSI) + " dBm\n"
+                        "   Manuf.:   " + manufacturerName);
+                }
+
+                // --- PwnBeacon: full GATT read ---
+                //if (isPwnBeaconDevice) {
+                //    PwnBeaconServiceHandler::readGATT(pClient, pwnBeacon);
+                //    LOG(LOG_BEACON, devTag + "Beacon type: PwnBeacon\n"
+                //        "   Name:     " + pwnBeacon.name + "\n"
+                //        "   Pwnd run: " + String(pwnBeacon.pwnd_run) + "\n"
+                //        "   Pwnd tot: " + String(pwnBeacon.pwnd_tot) + "\n"
+                //        "   FP:       " + PwnBeaconServiceHandler::fingerprintToString(pwnBeacon.fingerprint) + "\n"
+                //        "   RSSI:     " + String(currentRSSI) + " dBm");
+                //}
+
+                // --- Security analysis (writable chars, DFU, UART, encryption) ---
+                SecurityResult secResult = analyzeDeviceSecurity(pClient, dev);
+
+                dev.connectionEncrypted      = secResult.connectionEncrypted;
+                dev.hasWritableChars         = (secResult.writableCharCount > 0);
+                dev.writableCharCount        = secResult.writableCharCount;
+                dev.hasWritableWithoutAuth   = secResult.hasWritableWithoutAuth; // was previously dropped
+                dev.hasDFUService            = secResult.hasDFUService;
+                dev.hasUARTService           = secResult.hasUARTService;
+                dev.hasSensitiveUnencrypted  = secResult.hasSensitiveServiceUnencrypted;
+                dev.deviceFingerprint        = secResult.deviceFingerprint;
+
+                if (!secResult.findings.empty() || !secResult.deviceFingerprint.empty()) {
+                    String secLog = devTag + "Security findings:";
+                    for (auto& f : secResult.findings) {
+                        secLog += "\n   [" + String(f.severity.c_str()) + "] "
+                                + String(f.description.c_str());
+
+                        // Increment per-category security counters for the scan summary
+                        if (f.severity  == "HIGH")                   ScanContext::highFindingsCount++;
+                        if (f.category  == "SENSITIVE_UNENCRYPTED")  ScanContext::unencryptedSensitiveCount++;
+                        if (f.category  == "WRITABLE_NO_AUTH")       ScanContext::writableNoAuthCount++;
+                    }
+                    if (!secResult.deviceFingerprint.empty()) {
+                        secLog += "\n   Fingerprint: " + String(secResult.deviceFingerprint.c_str());
+                    }
+                    LOG(LOG_SECURITY, secLog);
+                } else if (ScanContext::is_connectable) {
+                    LOG(LOG_SECURITY, devTag + "Security: connection failed, unable to verify");
+                } else {
+                    LOG(LOG_SECURITY, devTag + "Security: no issues found (" +
+                        String(secResult.totalCharCount) + " characteristics checked)");
+                }
+
+                // --- Full exposure analysis ---
+                bool isPublicAddrType = (device->getAddress().getType() == BLE_ADDR_PUBLIC);
+                MACType macType = getMACType(device->getAddress().toString().c_str(), isPublicAddrType);
+
+                dev.mac              = device->getAddress().toString().c_str();
+                dev.isConnectable    = ScanContext::is_connectable;
+                dev.isPublicMac      = (macType == MACType::Public);
+                dev.hasStaticMac     = (macType == MACType::Public || macType == MACType::StaticRandom);
+                dev.hasRotatingMac   = isRotatingMAC(macType);
+                dev.hasName          = !dev.name.empty();
+                dev.hasManufacturerData = !dev.manufacturer.empty();
+                dev.hasCleartextData = containsCleartext(payloadVec);
+
+                ExposureResult exposure = analyzeExposure(dev);
+                handleExposureResult(exposure, manufacturerName, devTag);
+
+                WebSender::sendDevice(dev, devSessionId, currentRSSI, isIBeacon, dev.hasNotifyData);
+
+                // Glasses expression: detective mode after successful GATT read
+                if (!UIContext::isGlassesTaskRunning.load() && !UIContext::isAngryTaskRunning.load())
+                {
+                    UIContext::isGlassesTaskRunning.store(true);
+
+                    if (xTaskCreatePinnedToCore( showGlassesExpressionTask, "BLEGlasses", 4096, nullptr, 4, &UIContext::glassesTaskHandle, 1) != pdPASS)
+                    {
+                        LOG(LOG_SYSTEM, "Failed to create BLEGlasses task");
+                        UIContext::isGlassesTaskRunning.store(false);
+                        UIContext::glassesTaskHandle = nullptr;
+                    }
+                }
+
+                delay(1000);
+            } else {
+                // Connected but attribute discovery failed (device likely rejected)
+                LOG(LOG_GATT, devTag + "Connected but attribute discovery failed: " + address);
+            }
+        } else {
+          // ---------------------------------------------------------------
+          //  Connection failed branch
+          // ---------------------------------------------------------------
+          // --- Apple model resolution ---
+          // Scan nameList for Apple model identifiers (e.g. "iPhone17,3")
+          String modelIdentifier;
+          for (const auto& n : ScanContext::nameList) {
+              String s = n.c_str();
+              if ((s.startsWith("iPhone") || s.startsWith("iPad") || s.startsWith("Mac"))
+                  && s.indexOf(",") != -1) {
+                  modelIdentifier = s;
+                  break;
+              }
+          }
+
+          String modelName;
+          if (!modelIdentifier.isEmpty()) {
+              modelName    = getAppleModelName(modelIdentifier);
+              displayName  = modelName;
+              dev.displayName = std::string(modelName.c_str()); 
+          } else if (manufacturerName == "Apple Inc.") {
+              modelName         = "Apple Device";
+              dev.displayName   = "Apple Device";
+          } else {
+              dev.name          = localName.c_str();
+              dev.manufacturer  = manufacturerName.c_str();
+          }  
+
+          if (device != nullptr) {
+              if (device->haveServiceUUID()) {
+                NimBLEUUID uuid = device->getServiceUUID();
+                String uuidStr = String(uuid.toString().c_str());
+                String serviceName = getServiceName(uuidStr);
+
+                LOG(LOG_GATT, devTag + "Service-UUID: " + uuidStr + " (" + serviceName + ")");
+
+                // --- Known / suspicious target detection (advertisement-based) ---
+                // Note: deviceInfoService are empty here since we didn't connect
+                String targetLabel;
+                if (isTargetDevice(localName.c_str(), address.c_str(), uuidStr.c_str(), "", targetLabel)) {
+                    ScanContext::targetFound = true;
+                    ScanContext::susDevice++;
+                    DeviceContext::xpManager.awardXP(2.0f);  // +2.0 XP: suspicious device found
+                    delay(1000);
+
+                    SusLog::add(targetLabel.c_str(), address.c_str(), (int8_t)ScanContext::rssi.load());
+
+                    // ← Audio alert
+                    auto* ms = MenuController::getState();
+                    if (ms->audioEnabled && ms->audioSuspicious) {
+                        M5.Speaker.setVolume(MenuController::getAlarmVolume());
+                        M5.Speaker.tone(1760, 200);
+                        while (M5.Speaker.isPlaying()) { delay(5); }
+                        M5.Speaker.tone(1760, 200);
+                    }
+
+                    //nibblesSpeechShow(SpeechContext::SUSPICIOUS);
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+
+                    if (!UIContext::isAngryTaskRunning.load() && NetworkContext::displayEnabled)
+                    {
+                        UIContext::isAngryTaskRunning.store(true);
+
+                        if (xTaskCreatePinnedToCore( showAngryExpressionTask, "AngryFace", 4096, nullptr, 5, &UIContext::angryTaskHandle, 1) != pdPASS)
+                        {
+                            LOG(LOG_SYSTEM, "Failed to create AngryFace task");
+                            UIContext::isAngryTaskRunning.store(false);
+                            UIContext::angryTaskHandle = nullptr;
+                        }
+                    }
+                }
+              }
+
+              // Manufacturer
+              if (device->haveManufacturerData()) {
+                  std::string mfg = device->getManufacturerData();
+
+                  if (mfg.size() >= 2) {
+                      manufacturerId   = (uint8_t)mfg[1] << 8 | (uint8_t)mfg[0];
+                  }
+                  manufacturerName = getManufacturerName(manufacturerId);
+
+                  LOG(LOG_GATT, devTag + "Manufacturer: " + manufacturerName.c_str() + "(" + manufacturerId + ")");
+              }
+
+              // Appearance
+              if (device->haveAppearance()) {
+                  uint16_t ap = device->getAppearance();
+                  String apName = getAppearanceName(ap);
+                  appearanceName = apName;  // for speech bubble in showGlassesExpressionTask
+                  LOG(LOG_GATT, devTag + "Appearance: " + apName
+                      + " (0x" + String(ap, HEX) + ")");
+              }
+
+              // RAW (immer!)
+              auto payload = device->getPayload();
+              extractUUIDs(payload);
+          }
+
+          String reason;
+          if (currentRSSI <= RSSI_IGNORE_THRESHOLD)  reason = "Too far / weak signal";
+          else if (currentRSSI <= RSSI_CONNECT_THRESHOLD) reason = "Weak or unstable signal";
+          else                                            reason = "Protected (no pairing possible)";
+
+          LOG(LOG_GATT, devTag + reason + ": " + address
+              + " (" + String(currentRSSI) + " dBm)");
+
+          // --- Log full device info even without GATT connection ---
+          String indent = StringUtils::indentFromTag(devTag);
+          String infoLog = devTag + "Device info (no GATT)\n"
+              + indent + "Address:" + address + "\n"
+              + indent + "Name:   " + localName + "\n"
+              + indent + "Manuf.: " + manufacturerName;
+
+          float distance = powf(10.0f,
+              (float)(DISTANCE_CONSTANT - currentRSSI) / (float)RSSI_CONSTANT);
+          infoLog += "\n" + indent + "Distance: ~" + String(distance, 2) + " m"
+                  + "\n" + indent + "RSSI:     " + String(currentRSSI) + " dBm";
+          LOG(LOG_GATT, infoLog);
+
+          LOG(
+            LOG_GATT, devTag + "Device PHY info\n" +
+            devTag + "ADV TYPE: " + String(device->getAdvType()) +
+            " | LEGACY: " +
+            String(device->isLegacyAdvertisement() ? "YES" : "NO") +
+            " | PHY: " +
+            String(device->getPrimaryPhy()) + "/" +
+            String(device->getSecondaryPhy())
+          );
+          
+          dev.isConnectable = false;
+          ExposureResult exposure = analyzeExposure(dev);
+          handleExposureResult(exposure, manufacturerName, devTag);
+
+          WebSender::sendDevice(dev, devSessionId, currentRSSI, isIBeacon, dev.hasNotifyData);
+
+          // Sad expression: device visible but connection rejected
+          if (!UIContext::isAngryTaskRunning.load() && !UIContext::isSadTaskRunning.load())
+          {
+              UIContext::isSadTaskRunning.store(true);
+
+              if (xTaskCreatePinnedToCore( showSadExpressionTask, "SadFace", 4096, NULL, 3, &UIContext::sadTaskHandle, 1) != pdPASS)
+              {
+                  LOG(LOG_SYSTEM, "Failed to create SadFace task");
+                  UIContext::isSadTaskRunning.store(false);
+              }
+          }
+          delay(1000);
+        }
+
+        // --- Wardriving: log device with GPS coordinates if fix is valid ---
+        if (NetworkContext::wardrivingEnabled.load()) {
+            NetworkContext::gpsManager.update();
+
+            if (NetworkContext::gpsManager.isValid()) {
+                NetworkContext::wigleLogger.logDevice(
+                    address.c_str(),
+                    displayName.length() > 0 ? displayName.c_str() : String(dev.name.c_str()),
+                    currentRSSI,
+                    NetworkContext::gpsManager.getLatitude(),
+                    NetworkContext::gpsManager.getLongitude(),
+                    NetworkContext::gpsManager.getAltitude(),
+                    NetworkContext::gpsManager.getHDOP(),
+                    NetworkContext::gpsManager.getTimestamp()
+                );
+            }
+        }
+        // --- Clean up NimBLE client ---
+        if (pClient != nullptr && pClient->isConnected()) {
+            pClient->disconnect();
+        }
+        NimBLEDevice::deleteClient(pClient);
+        pClient = nullptr;
+        delay(1000);  // brief delay to ensure clean disconnection before next iteration
+    }   // end per-device loop
+
+    // =======================================================================
+    //  Scan summary
+    // =======================================================================
+    LOG(LOG_SCAN, "##########################");
+    LOG(LOG_SCAN, "Scan summary:");
+    LOG(LOG_SCAN, "  Spotted:    " + String(ScanContext::allSpottedDevice.load()));
+    LOG(LOG_SCAN, "  Sniffed:    " + String(ScanContext::targetConnects.load()));
+    LOG(LOG_SCAN, "  Suspicious: " + String(ScanContext::susDevice.load()));
+    LOG(LOG_SCAN, "  Beacons:    " + String(DeviceContext::beaconsFound.load()));
+    //LOG(LOG_SCAN, "  PwnBeacons: " + String(DeviceContext::pwnbeaconsFound.load()));
+
+    // ============================================================
+    // META RAY-BAN STATISTICS
+    // ============================================================
+    if (MetaGlasses::stats.glassesFound > 0) {
+        LOG(LOG_SCAN, "  --- 👓 Meta Ray-Ban ---");
+        LOG(LOG_SCAN, "  Total found:    " + String(MetaGlasses::stats.glassesFound));
+        LOG(LOG_SCAN, "  Gen 2:          " + String(MetaGlasses::stats.gen2Detected));
+        LOG(LOG_SCAN, "  Gen 1:          " + String(MetaGlasses::stats.gen1Detected));
+        if (!MetaGlasses::stats.lastModelDetected.isEmpty()) {
+            LOG(LOG_SCAN, "  Last model:     " + MetaGlasses::stats.lastModelDetected);
+        }
+    }
+
+    if (ScanContext::highFindingsCount.load()           > 0 ||
+        ScanContext::unencryptedSensitiveCount.load()   > 0 ||
+        ScanContext::writableNoAuthCount.load()         > 0) {
+        LOG(LOG_SCAN, "  --- Security ---");
+        LOG(LOG_SCAN, "  HIGH findings:   " + String(ScanContext::highFindingsCount.load()));
+        LOG(LOG_SCAN, "  Sensitive unenc: " + String(ScanContext::unencryptedSensitiveCount.load()));
+        LOG(LOG_SCAN, "  Writable noAuth: " + String(ScanContext::writableNoAuthCount.load()));
+    }
+
+    if (NetworkContext::wardrivingEnabled.load()) {
+        LOG(LOG_SCAN, "  WiGLE log:  " + String(NetworkContext::wigleLogger.getLoggedCount()));
+        NetworkContext::wigleLogger.flush();
+    }
+    LOG(LOG_SCAN, "##########################\n");
+
+    // Persist XP to SD card after every scan cycle
+    DeviceContext::xpManager.save();
+
+    delay(2000);  // brief cooldown before next cycle
+
+    // Clear any stale speech bubble that may have been skipped due to queuing
+    clearSpeechBubble();
+
+    ScanContext::scanCancelRequested.store(false);
+    ScanContext::scanIsRunning.store(false);
+}
