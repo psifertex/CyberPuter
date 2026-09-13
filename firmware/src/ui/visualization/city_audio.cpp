@@ -2,6 +2,7 @@
 #include "core/visualization/soundtrack.h"
 #include "core/visualization/wav_stream.h"
 #include "core/visualization/pcm_queue.h"
+#include "core/visualization/alert_ducker.h"
 #include "infrastructure/platform/hardware.h"
 #include "infrastructure/logging/logger.h"
 #include "ui/menu/menu_controller.h"
@@ -18,6 +19,8 @@ Soundtrack track;
 bool acquired=false;
 uint8_t level=64, previousVolume=0, previousChannels[4]{};
 constexpr uint8_t MUSIC_CHANNEL=4;
+constexpr uint8_t ALERT_CHANNEL=7;
+AlertDucker alertDucker;
 constexpr size_t MAX_TRACKS=16, NAME_BYTES=48;
 constexpr const char* MUSIC_DIR="/cyberputer/music";
 constexpr const char* ALERT_PATH="/cyberputer/sfx/suspicious.wav";
@@ -156,13 +159,19 @@ void updateMusic() {
 }
 struct SpeakerSink final : SoundSink {
     bool alert() override {
-        if(!acquired || alertState.load()!=AlertState::Ready || M5.Speaker.isPlaying(7))return false;
-        return M5.Speaker.playRaw(alertPcm,alertSamples,8000,false,1,7,false);
+        if(!acquired || alertState.load()!=AlertState::Ready || M5.Speaker.isPlaying(ALERT_CHANNEL))return false;
+        M5.Speaker.setChannelVolume(MUSIC_CHANNEL,
+            alertDucker.start(M5.Speaker.getChannelVolume(MUSIC_CHANNEL)));
+        if(M5.Speaker.playRaw(alertPcm,alertSamples,8000,false,1,ALERT_CHANNEL,false))return true;
+        // A rejected submission must not leave music permanently attenuated.
+        M5.Speaker.setChannelVolume(MUSIC_CHANNEL,alertDucker.update(false));
+        return false;
     }
     void stop(Voice voice) override { if(acquired)M5.Speaker.stop(4+int(voice)); }
 } sink;
 void release() {
     stopQueuedMusic();
+    alertDucker.reset(); // Do not restore costume gain after returning ownership.
     if(!acquired)return;
     for(uint8_t i=0;i<4;++i){M5.Speaker.stop(i+4);M5.Speaker.setChannelVolume(i+4,previousChannels[i]);}
     M5.Speaker.setVolume(previousVolume);acquired=false;
@@ -234,9 +243,13 @@ void update(uint32_t now,bool scannerReady) {
         for(uint8_t i=0;i<4;++i)previousChannels[i]=M5.Speaker.getChannelVolume(i+4);
         M5.Speaker.setVolume(level);
         M5.Speaker.setChannelVolume(4,160);M5.Speaker.setChannelVolume(5,80);
-        M5.Speaker.setChannelVolume(6,64);M5.Speaker.setChannelVolume(7,120);
+        M5.Speaker.setChannelVolume(6,64);M5.Speaker.setChannelVolume(ALERT_CHANNEL,160);
         acquired=true;
     }
+    // isPlaying(channel) counts both queued and active samples. Keep ducking
+    // through asynchronous F-off stops, and restore only when the alert is idle.
+    if(alertDucker.isActive())M5.Speaker.setChannelVolume(MUSIC_CHANNEL,
+        alertDucker.update(M5.Speaker.isPlaying(ALERT_CHANNEL)!=0));
     updateMusic();track.tick(now,sink);
 }
 } // namespace CityAudio

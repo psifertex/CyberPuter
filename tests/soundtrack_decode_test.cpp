@@ -1,5 +1,7 @@
 #include "core/visualization/wav_stream.h"
 #include "core/visualization/pcm_queue.h"
+#include "core/visualization/alert_ducker.h"
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <fstream>
@@ -26,6 +28,18 @@ static Memory sample() {
     return memory;
 }
 int main(int argc,char** argv) {
+    AlertDucker duck;
+    assert(!duck.isActive());
+    assert(duck.start(160)==48 && duck.isActive());
+    assert(duck.update(true)==48); // Queued/active alert keeps music quiet.
+    assert(duck.start(48)==48); // Never compound attenuation on repeated starts.
+    assert(duck.update(false)==160 && !duck.isActive()); // Finish or rejected play.
+    assert(duck.start(120)==36); // Preserve a different music level.
+    assert(duck.update(true)==36); // Async stop still has a retained sample.
+    assert(duck.update(false)==120);
+    duck.start(160);duck.reset();assert(!duck.isActive()); // Mute/exit drops ownership.
+    assert(duck.start(80)==24 && duck.update(false)==80); // Fresh gain on re-entry.
+    assert(duck.start(0)==0 && duck.update(false)==0); // Never unmute a silent channel.
     PcmQueue queue;
     auto* first=queue.acquire();assert(first);first->epoch=1;queue.publish();
     auto* second=queue.acquire();assert(second);second->epoch=1;queue.publish();
@@ -64,9 +78,18 @@ int main(int argc,char** argv) {
         std::ifstream file(argv[i],std::ios::binary);assert(file.good());
         Memory bundled;bundled.data.assign(std::istreambuf_iterator<char>(file),{});
         assert(readPcmWav(bundled,info));
-        if(info.rate==8000)assert(info.bytes>0 && info.bytes<=32000);
+        if(info.rate==8000){
+            assert(info.bytes>0 && info.bytes<=32000);
+            int peak=0;
+            for(size_t offset=info.offset;offset<info.offset+info.bytes;offset+=2){
+                const int raw=int(bundled.data[offset])|(int(bundled.data[offset+1])<<8);
+                const int value=raw>=32768?raw-65536:raw;
+                peak=std::max(peak,value<0?-value:value);
+            }
+            assert(peak>=22500 && peak<=24000); // Approximately -3 dBFS, no clipping.
+        }
         else assert(info.rate==22050 && info.bytes>22050*60);
         std::cout<<argv[i]<<": "<<double(info.bytes)/(info.rate*2)<<" seconds\n";
     }
-    std::cout<<"PASS: PCM queue ownership/async stop/epoch changes; WAV truncation/overflow/format/metadata\n";
+    std::cout<<"PASS: alert ducking/restoration/peak; PCM ownership/async stop; WAV validation\n";
 }

@@ -36,6 +36,18 @@ F on also alerts for a flagged device already visible. Classification is heurist
 not proof of malicious activity. Music and alerts begin enabled on entry, but
 the saved master Audio mute still takes precedence.
 
+The bundled alert is normalized to approximately -3 dBFS peak. During playback,
+music channel gain drops by about 21 dB, then returns to its prior setting when
+the alert channel becomes idle (including after an asynchronous F-off stop).
+The music keeps advancing; it is not paused/restarted. Alerts use the same nominal
+channel level as music, while master volume and M/X mute remain in control.
+Muting or leaving a view relinquishes the temporary gain state, and failed
+alert submissions immediately restore music. No additional PCM buffer is needed.
+
+**After updating the alert file, replace `/cyberputer/sfx/suspicious.wav` on the
+card and reboot** to reload the cache. Start testing at a low master volume;
+the new sample is substantially louder than the old version.
+
 The worker loads the alert once into an immutable 32 KB cache. Replacement alerts
 must be mono signed 16-bit PCM WAV at 8 kHz and at most two seconds (32,000 PCM
 bytes). Reload by rebooting. Missing/invalid files produce a footer message;
