@@ -13,6 +13,12 @@ LABScon Neon City** from the menu.
 metrics, and **Esc/backtick**, **M**, or **Q** returns to the menu. The previous
 GhostBLE scan-enabled state is restored on exit.
 
+**A** toggles active scans to request additional BLE names. **B** toggles the
+cyberpunk synth loop, **F** toggles discovery/name sounds, **X** silences both,
+and **- / =** adjusts city volume. **H** shows the key reference. Audio starts
+off and respects GhostBLE's master Audio setting. Active scans do not pair or
+connect; some devices still will not supply names.
+
 ![Actual C++ city renderer with synthetic observations](preview/city-firmware-240x135.png)
 
 City has a shared, hardware-independent renderer interface and bounded
@@ -32,11 +38,13 @@ pio run -d firmware -e ghostble_cardputer
 The application binary is
 `firmware/.pio/build/ghostble_cardputer/firmware.bin`.
 This is an application image, not a merged image to flash at address zero.
-No device has been flashed.
+The initial city build was flashed with approval; the active-name/audio update
+is built but not yet flashed. Ask before every flash; no backups unless requested.
 
 Both the unmodified baseline and the city firmware compile successfully.
 Host tests cover bounded storage, repeated observations, names, RSSI smoothing,
-expiry and clock rollover, unavailable renderers, and drawing bounds:
+expiry and clock rollover, unavailable renderers, drawing bounds, and audio
+scheduling/mute/effect rate limits:
 
 ```sh
 cmake -S tests -B build/host

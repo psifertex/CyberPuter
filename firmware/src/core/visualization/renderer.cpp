@@ -40,6 +40,8 @@ static void text(Surface& s, const char* str, int x, int y, uint8_t color) {
             if (ch >= '0' && ch <= '9') glyph=FONT[ch-'0'];
             else if (ch >= 'A' && ch <= 'Z') glyph=FONT[10+ch-'A'];
             else if (ch == '-') std::memset(special,8,5);
+            else if (ch == '=') std::memset(special,0x14,5);
+            else if (ch == '+') {std::memset(special,8,5);special[2]=0x3e;}
             else if (ch == '/') {special[0]=0x40;special[1]=0x20;special[2]=8;special[3]=4;special[4]=2;}
             else if (ch == '.') special[2]=0x60;
             else if (ch != ' ') {special[0]=2;special[1]=1;special[2]=0x51;special[3]=9;special[4]=6;}

@@ -14,13 +14,15 @@ struct Observation {
     uint32_t lastSeen = 0;
     uint32_t firstSeen = 0;
     bool used = false;
+    bool named = false;
 };
 using Snapshot = std::array<Observation, MAX_OBSERVATIONS>;
+enum class ObservationEvent { None, Discovered, NameResolved };
 
 // Platform-independent and allocation-free. The adapter owns synchronization.
 class ObservationStore {
 public:
-    void observe(const std::array<uint8_t, 7>& identity, const char* name,
+    ObservationEvent observe(const std::array<uint8_t, 7>& identity, const char* name,
                  size_t length, int rssi, uint32_t now);
     void expire(uint32_t now);
     const Snapshot& snapshot() const { return entries; }

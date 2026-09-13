@@ -3,6 +3,7 @@ project(cyberputer_host_tests LANGUAGES CXX)
 enable_testing()
 add_executable(visualization_test visualization_test.cpp
     ../firmware/src/core/visualization/observations.cpp
+    ../firmware/src/core/visualization/soundtrack.cpp
     ../firmware/src/core/visualization/renderer.cpp)
 target_include_directories(visualization_test PRIVATE ../firmware/src)
 target_compile_features(visualization_test PRIVATE cxx_std_17)

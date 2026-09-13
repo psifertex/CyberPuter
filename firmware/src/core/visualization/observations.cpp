@@ -8,12 +8,14 @@ void ObservationStore::expire(uint32_t now) {
         if (entry.used && uint32_t(now - entry.lastSeen) >= EXPIRE_MS) entry = {};
 }
 
-void ObservationStore::observe(const std::array<uint8_t, 7>& identity,
+ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identity,
                                const char* name, size_t length, int rssi, uint32_t now) {
     expire(now);
     Observation* slot = nullptr;
     for (auto& entry : entries)
         if (entry.used && entry.identity == identity) { slot = &entry; break; }
+    const bool isNew = slot == nullptr;
+    const bool previouslyNamed = slot && slot->named;
     if (!slot) {
         for (auto& entry : entries) if (!entry.used) { slot = &entry; break; }
         // Full crowd: evict the least recently observed entry, never grow the table.
@@ -40,7 +42,10 @@ void ObservationStore::observe(const std::array<uint8_t, 7>& identity,
             slot->name[i] = ch >= 32 && ch <= 126 ? char(ch) : '?';
         }
         slot->name[i] = '\0';
+        slot->named = true;
     }
     slot->lastSeen = now;
+    if (slot->named && !previouslyNamed) return ObservationEvent::NameResolved;
+    return isNew ? ObservationEvent::Discovered : ObservationEvent::None;
 }
 } // namespace Visualization
