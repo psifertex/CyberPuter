@@ -9,11 +9,10 @@
 
 Complete 1.846-second sci-fi game alarm converted from stereo Ogg to mono
 signed 16-bit PCM WAV at 8,000 Hz, with short edge fades and approximately
--3 dBFS peak normalization. The original quiet conversion receives +21.6 dB;
+-3 dBFS peak normalization. The conversion applies a +21.6 dB gain stage;
 measured peak is -3.0 dBFS and mean level is -6.7 dBFS, without clipping.
 The 29,536 PCM bytes fit the player's fixed 32 KB cache. Converted recording
 remains CC0. Attribution is appreciated but not required. No endorsement implied.
-Source/license verified September 12, 2026.
 
 Original SHA-256:
 `ace7c78d3e071eadce6db3df560fb4722af41efbc0934b55439dcc28ab27bb20`

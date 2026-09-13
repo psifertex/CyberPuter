@@ -1,11 +1,11 @@
-# Current Cardputer keyboard map
+# Cardputer keyboard map
 
-Applies to the latest source/build, including suspicious-only alerts. Alphabetic
+Alphabetic
 bindings accept upper/lowercase. Punctuation is literal, without Fn. The four
 arrow-marked punctuation keys are semicolon (up), period (down), comma (left),
 and slash (right). Esc here means the backtick key.
 
-## City, radar and signal rain
+## Visualizations
 
 | Key | Action |
 | --- | --- |
@@ -31,16 +31,14 @@ and slash (right). Esc here means the backtick key.
 | H | Open/close full-screen help |
 | Backtick/Esc, Q | Leave visualization and open menu; close help first |
 
-In help, semicolon/period scroll one line and comma/slash scroll one page. No Fn
-required. H, backtick/Esc or Q closes help; M/X still mutes audio. Other shortcuts
-are inactive while reading help. The menu Show Help item opens the same page and
-returns to the menu on close, without starting music/scanning.
+Help navigation is listed under menu and utility screens below. Other shortcuts
+are inactive while reading help. The menu Show Help item returns to the menu
+on close, without starting music/scanning.
 
 Switching views preserves audio/scanning settings and resets paging to automatic
 page one. Entering from the menu starts both audio options enabled again; the
 saved master Audio setting and alarm-volume-derived initial volume still apply.
-F on will alert for a currently visible flagged device, useful for testing with
-your Flipper. Repeated advertisements do not continuously sound the alarm.
+F on also alerts for a currently visible flagged device.
 
 G affects Apple Find My only, not Google Find Hub, Tile or SmartTag. Off keeps
 Find My observations visible but informational, with ordinary retention/page
@@ -72,13 +70,15 @@ There is no previous-track, screenshot, or dedicated test-sound binding.
 | Help page | M / X | Mute audio |
 
 M/Q and the visualization number shortcuts are not menu navigation shortcuts.
-Old mascot-home shortcuts are no longer reachable as a home screen. The old help
-entry point now forwards to the new help page rather than listing those shortcuts.
+All help entry points show the same scrollable visualization controls.
 
 ## Research Mode setting
 
 This inherited setting controls active BLE scanning in the legacy scanner
 (`ble_scanner.cpp`). It also changes the legacy research icon/mascot dialogue.
 Wardriving enables it automatically. It does not control the costume scanner:
-use A in city/radar/rain for active scan requests, without pairing or GATT
+use A in any visualization for active scan requests, without pairing or GATT
 connections. Research Mode is not a special mode for revealing encrypted names.
+
+Device paging and T affect only city, radar and rain. Odyssey contains no
+device labels; all other global controls still apply.

@@ -2,3 +2,14 @@
 .pio/
 node_modules/
 /build/
+/research/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+*.bin
+*.elf
+*.log
+*.pcap
+*.pcapng
