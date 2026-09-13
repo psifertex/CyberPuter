@@ -1,4 +1,5 @@
 #include "menu_controller.h"
+#include "config/version.h"
 #include "ui/visualization/visualization_view.h"
 
 #include <M5Unified.h>
@@ -250,6 +251,7 @@ static void buildItems() {
     action("LABScon Neon City", []() { VisualizationView::open(); }, "V");
     action("LABScon Neon Radar", []() { VisualizationView::open(Visualization::Mode::Radar); }, "2");
     action("LABScon Signal Rain", []() { VisualizationView::open(Visualization::Mode::Rain); }, "3");
+    action("LABScon Neon Odyssey", []() { VisualizationView::open(Visualization::Mode::Odyssey); }, "4");
 
     // ── HELP ─────────────────────────────────────────────────
     section("HELP");
@@ -600,7 +602,7 @@ void draw() {
     M5.Lcd.setCursor(2, MENU_H - ROW_H + 2);
 
 #if HAS_KEYBOARD
-    M5.Lcd.print(" ^:up  v:down  ok:select  esc:close");
+    M5.Lcd.print("CYBERPUTER " CYBERPUTER_VERSION "  ESC:back");
 #else
     M5.Lcd.print("blue:down  big:select  hold big:back");
 #endif

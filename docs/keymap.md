@@ -12,6 +12,7 @@ and slash (right). Esc here means the backtick key.
 | 1 | Neon city |
 | 2 | Neon radar |
 | 3 | Signal rain |
+| 4 | Neon Odyssey: device-free tunnel/circuit/warp eye candy |
 | Comma | Previous device page; stop automatic paging |
 | Slash | Next device page; stop automatic paging |
 | 0 | Resume six-second automatic paging |

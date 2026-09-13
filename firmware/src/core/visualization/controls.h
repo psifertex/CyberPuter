@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 namespace Visualization {
-enum class Action { None, City, Radar, Rain, Left, Right, Up, Down, AutoPage,
+enum class Action { None, City, Radar, Rain, Odyssey, Left, Right, Up, Down, AutoPage,
     Active, Pause, Music, NextTrack, Alerts, Mute, VolumeDown, VolumeUp,
     Display, Stats, Help, Findings, FindMy, Menu };
 struct Binding { char key; bool fn; Action action; const char* help; };
@@ -10,6 +10,7 @@ inline constexpr Binding BINDINGS[]={
     {'1',false,Action::City,"1          NEON CITY"},
     {'2',false,Action::Radar,"2          NEON RADAR"},
     {'3',false,Action::Rain,"3          SIGNAL RAIN"},
+    {'4',false,Action::Odyssey,"4          NEON ODYSSEY"},
     {',',false,Action::Left,"LEFT       PREVIOUS PAGE"},
     {'/',false,Action::Right,"RIGHT      NEXT PAGE"},
     {';',false,Action::Up,"UP         SCROLL HELP UP"},

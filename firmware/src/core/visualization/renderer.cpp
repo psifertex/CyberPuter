@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "controls.h"
+#include "../../config/version.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -180,10 +181,69 @@ void drawRain(Surface& s,const Frame& f) {
         s.fill(x,y-1,115,10,Sign);label(s,f.observations[p.indices[i]],x+2,y,18,f.now,i%2?Pink:Cyan,f.includeFindMy);}
     viewFooter(s,f);
 }
+// Bounded raster lines: endpoints stay within a small virtual viewport.
+static void neonLine(Surface& s,int x,int y,int xx,int yy,uint8_t color) {
+    const int dx=std::abs(xx-x),sx=x<xx?1:-1,dy=-std::abs(yy-y),sy=y<yy?1:-1;
+    int error=dx+dy;
+    for(;;){pixel(s,x,y,color);if(x==xx && y==yy)break;
+        const int twice=2*error;if(twice>=dy){error+=dy;x+=sx;}if(twice<=dx){error+=dx;y+=sy;}}
+}
+void drawOdyssey(Surface& s,const Frame& f) {
+    // Original procedural art: no textures, extra framebuffer or device labels.
+    // 54-second suite, slow plasma under a tunnel / circuit rotozoom / warp field.
+    const float t=float(f.now%54000)/1000.0f;
+    const unsigned act=(f.now/18000)%3;
+    static constexpr uint8_t glow[]={Background,Building,Dim,VioletDim,Violet,TealDim,Grid,Building};
+    int waveX[80],waveY[45];
+    for(int x=0;x<80;++x)waveX[x]=int(24*std::sin(x*.10f+t*.7f));
+    for(int y=0;y<45;++y)waveY[y]=int(24*std::sin(y*.16f-t*.9f));
+    for(int y=0;y<45;++y)for(int x=0;x<80;++x){
+        const unsigned phase=unsigned(waveX[x]+waveY[y]+64+int(t*5));
+        s.fill(x*3,y*3,3,3,glow[(phase/12)%8]);
+    }
+    const int cx=120+int(23*std::sin(t*.6f)),cy=66+int(12*std::cos(t*.4f));
+    if(act==0){
+        int priorX[8]{},priorY[8]{};
+        for(int ring=0;ring<12;++ring){
+            const float depth=1.0f+float(ring)+(1.0f-std::fmod(t*1.8f,1.0f));
+            const float radius=310.0f/depth,twist=t*.22f+depth*.085f;
+            int xs[8],ys[8];
+            for(int k=0;k<8;++k){const float angle=k*.785398f+twist;
+                xs[k]=cx+int(radius*std::cos(angle));ys[k]=cy+int(radius*.68f*std::sin(angle));}
+            for(int k=0;k<8;++k){
+                neonLine(s,xs[k],ys[k],xs[(k+1)%8],ys[(k+1)%8],ring%3?TealDim:Pink);
+                if(ring)neonLine(s,xs[k],ys[k],priorX[k],priorY[k],k%2?Violet:Cyan);
+                priorX[k]=xs[k];priorY[k]=ys[k];
+            }
+        }
+    }else if(act==1){
+        const float angle=t*.19f,scale=1.0f+.3f*std::sin(t*.8f);
+        const float a=std::cos(angle)*scale,b=std::sin(angle)*scale;
+        // Rotating circuitry in screen space, one sample per 3x3 block.
+        for(int y=0;y<HEIGHT;y+=3)for(int x=0;x<WIDTH;x+=3){
+            const int u=int((x-cx)*a-(y-cy)*b)+2048+int(t*8);
+            const int v=int((x-cx)*b+(y-cy)*a)+2048;
+            if(u%32<2 || v%32<2)s.fill(x,y,3,3,(u/32+v/32)%3?TealDim:Pink);
+            if(u%32<5 && v%32<5)s.fill(x,y,3,3,Cyan);
+        }
+    }else{
+        for(int i=0;i<64;++i){
+            const float z=1.0f+std::fmod(i*.719f+54.0f-t*.7f,18.0f);
+            const float angle=i*2.39996f+t*.04f;
+            const float r=45.0f+float((i*73)%240);
+            const int x=cx+int(r*std::cos(angle)/z*3),y=cy+int(r*std::sin(angle)/z*2);
+            neonLine(s,x,y,cx+(x-cx)*11/10,cy+(y-cy)*11/10,i%5?Cyan:Pink);
+        }
+        for(int i=0;i<4;++i)circle(s,cx,cy,10+i*7, i%2?Violet:TealDim);
+    }
+    // Restrained, static branding; no scanner panels and no full-screen flashes.
+    s.fill(89,5,62,13,Sign);text(s,"LABScon",99,8,White);
+    if(f.status){s.fill(0,123,WIDTH,12,Background);text(s,f.status,3,126,TealDim);}
+}
 void drawHelp(Surface& s,size_t scroll) {
     scroll=std::min(scroll,helpMaxScroll());
     s.fill(0,0,WIDTH,HEIGHT,Background);
-    text(s,"LABScon / CONTROLS",5,4,Pink);s.fill(0,15,240,1,Grid);
+    text(s,"CYBERPUTER " CYBERPUTER_VERSION " / HELP",5,4,Pink);s.fill(0,15,240,1,Grid);
     for(size_t i=0;i<HELP_ROWS && scroll+i<helpLineCount();++i)
         text(s,helpLine(scroll+i),5,21+int(i)*11,i%2?White:Cyan);
     s.fill(236,20,2,98,Grid);
@@ -196,10 +256,12 @@ const Renderer* rendererFor(Mode mode) {
     static const Renderer CITY{Mode::City,"Neon city",drawCity};
     static const Renderer RADAR{Mode::Radar,"Neon radar",drawRadar};
     static const Renderer RAIN{Mode::Rain,"Signal rain",drawRain};
+    static const Renderer ODYSSEY{Mode::Odyssey,"Neon odyssey",drawOdyssey};
     switch(mode){
         case Mode::City:return &CITY;
         case Mode::Radar:return &RADAR;
         case Mode::Rain:return &RAIN;
+        case Mode::Odyssey:return &ODYSSEY;
     }
     return nullptr;
 }

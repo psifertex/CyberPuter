@@ -93,6 +93,13 @@ The browser preview checks and captures can be reproduced in this environment:
 NODE_PATH=/opt/homebrew/lib/node_modules node preview/capture.cjs
 ```
 
+## Current release: 0.4.0
+
+Menu and H help display the release version. Press **4** for
+[Neon Odyssey](docs/neon-odyssey.md), an original demoscene-inspired eye-candy
+suite using the existing music, without device names. Versions increment for
+each feature release (minor) and bugfix release (patch).
+
 ## Research notes — 2026-09-12
 
 See the [Find My research review](docs/find-my-research.md) (2026-09-13) for

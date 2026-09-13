@@ -153,6 +153,15 @@ int main(int argc,char** argv){
     for(size_t i=0;i<helpLineCount()+10;++i)drawHelp(frame,i);
     drawHelp(frame,SIZE_MAX);
     Snapshot empty{};Framebuffer background;
+    assert(actionFor('4')==Action::Odyssey && rendererFor(Mode::Odyssey));
+    for(uint32_t t:{0u,17999u,18000u,35999u,36000u,53999u,54000u,UINT32_MAX}){
+        drawOdyssey(frame,{store.snapshot(),t,nullptr,8,true,true});
+        drawOdyssey(background,{empty,t,nullptr,0,false,false});
+        assert(std::memcmp(frame.pixels,background.pixels,FRAME_BYTES)==0);
+    }
+    drawOdyssey(frame,{empty,1000,nullptr});drawOdyssey(background,{empty,2000,nullptr});
+    assert(std::memcmp(frame.pixels,background.pixels,FRAME_BYTES)!=0);
+    for(uint32_t t=0;t<54000;t+=137)drawOdyssey(frame,{empty,t,"STATUS"});
     for(auto mode:{Mode::City,Mode::Radar,Mode::Rain}){
         rendererFor(mode)->draw(frame,{store.snapshot(),1000,nullptr,5,false});
         rendererFor(mode)->draw(background,{empty,1000,nullptr,0,false});
@@ -202,6 +211,7 @@ int main(int argc,char** argv){
     if(argc>2){drawRadar(frame,{store.snapshot(),3000,nullptr});frame.save(argv[2]);}
     if(argc>3){drawRain(frame,{store.snapshot(),3000,nullptr});frame.save(argv[3]);}
     if(argc>4){drawHelp(frame,7);frame.save(argv[4]);}
+    if(argc>5){drawOdyssey(frame,{store.snapshot(),3000,nullptr});frame.save(argv[5]);}
     std::cout<<"PASS: observations, flag transitions, suspicious-only alerts/cooldown/mute, expiry/wrap and pixel bounds\n";
     std::cout<<"Framebuffer "<<sizeof(frame.pixels)<<" bytes; table "<<sizeof(ObservationStore)<<" bytes\n";
 }

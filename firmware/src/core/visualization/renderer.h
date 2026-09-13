@@ -13,7 +13,7 @@ struct Surface {
     virtual ~Surface() = default;
     virtual void fill(int x, int y, int width, int height, uint8_t color) = 0;
 };
-enum class Mode : uint8_t { City, Radar, Rain };
+enum class Mode : uint8_t { City, Radar, Rain, Odyssey };
 struct Frame {
     const Snapshot& observations;
     uint32_t now;
@@ -32,5 +32,6 @@ const Renderer* rendererFor(Mode mode);
 void drawCity(Surface& surface, const Frame& frame);
 void drawRadar(Surface& surface, const Frame& frame);
 void drawRain(Surface& surface, const Frame& frame);
+void drawOdyssey(Surface& surface, const Frame& frame);
 void drawHelp(Surface& surface, size_t scroll);
 } // namespace Visualization

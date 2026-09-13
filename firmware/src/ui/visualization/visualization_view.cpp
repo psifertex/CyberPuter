@@ -26,6 +26,9 @@ bool restoreScan = false, displayOn = true, stats = false;
 bool showHelp=false;
 bool showFindings=true, helpReturnToMenu=false;
 bool includeFindMy=false;
+std::atomic<uint8_t> lastFlagPlatform{0};
+uint32_t flagNoticeAt=0;
+bool flagNotice=false;
 uint32_t findMyNoticeAt=0;
 bool findMyNotice=false;
 size_t helpScroll=0;
@@ -75,7 +78,10 @@ class ObservationCallbacks final : public NimBLEScanCallbacks {
         portENTER_CRITICAL(&storeMux);
         const auto event=store.observe(identity,name.data(),name.size(),device->getRSSI(),now,match);
         portEXIT_CRITICAL(&storeMux);
-        if(event==ObservationEvent::Flagged)soundEvents.fetch_or(match.platform==Platform::AppleFindMy?2:1);
+        if(event==ObservationEvent::Flagged){
+            lastFlagPlatform.store(uint8_t(match.platform));
+            soundEvents.fetch_or(match.platform==Platform::AppleFindMy?2:1);
+        }
     }
 } observationCallbacks;
 } // namespace
@@ -116,7 +122,7 @@ static bool openImpl(Visualization::Mode mode,bool menuHelp) {
     closing=false;stopped=false;ready=false;paused=menuHelp;scanFailed=false;
     activeNames=false;activeApplied=false;soundEvents=0;showHelp=menuHelp;
     helpReturnToMenu=menuHelp;helpScroll=0;showFindings=true;
-    includeFindMy=false;findMyNotice=false;
+    includeFindMy=false;findMyNotice=false;flagNotice=false;
     if(!menuHelp)CityAudio::begin();
     stats=false;lastFrame=0;framePeriod=50;
     displayOn=true;NetworkContext::displayEnabled=true;M5.Lcd.wakeup();
@@ -193,6 +199,7 @@ void handleKey(char key) {
     if(action==Action::City)setMode(Mode::City);
     if(action==Action::Radar)setMode(Mode::Radar);
     if(action==Action::Rain)setMode(Mode::Rain);
+    if(action==Action::Odyssey)setMode(Mode::Odyssey);
     if(action==Action::Left || action==Action::Right){autoPage=false;page+=action==Action::Right?1:(page?uint32_t(-1):0);}
     if(action==Action::AutoPage){autoPage=true;pageAt=millis();}
     if(action==Action::Active)activeNames=!activeNames.load();
@@ -248,6 +255,9 @@ void update() {
     if(autoPage && !showHelp && uint32_t(now-pageAt)>=6000){++page;pageAt=now;}
     // Audio timing remains independent of redraw cadence and display sleep.
     const uint8_t events=soundEvents.exchange(0);
+    // Defensive final gate, also discarding delayed Find My audio requests.
+    if(!includeFindMy)CityAudio::cancelFindMyAlert();
+    if((events&1) || ((events&2) && includeFindMy)){flagNotice=true;flagNoticeAt=now;}
     if(events&1)CityAudio::notify(true);
     if((events&2) && includeFindMy)CityAudio::notify(true,true);
     if(!closing.load() && !helpReturnToMenu)CityAudio::update(now,ready.load());
@@ -268,6 +278,10 @@ void update() {
     else if(activeNames.load()!=activeApplied.load())status="NAME MODE CHANGES NEXT SCAN";
     else if(findMyNotice && uint32_t(now-findMyNoticeAt)<3000)
         status=includeFindMy?"G FIND MY FLAGS ON":"G FIND MY INFORMATIONAL ONLY";
+    else if(flagNotice && uint32_t(now-flagNoticeAt)<3000){
+        std::snprintf(metrics,sizeof(metrics),"FLAG %s",DeviceClassifier::label(DeviceClassifier::Platform(lastFlagPlatform.load())));
+        status=metrics;
+    }
     else if(CityAudio::effectsEnabled() && std::strcmp(CityAudio::alertStatus(),"ALERT READY")!=0)
         status=CityAudio::alertStatus();
     else if(audioNotice && uint32_t(now-audioNoticeAt)<6000)
@@ -280,6 +294,7 @@ void update() {
             CityAudio::effectsEnabled()?"ON":"OFF",includeFindMy?"ON":"OFF",unsigned(CityAudio::volume()),
             MenuController::getAudioEnabled()?"H":"MUTE");
         status=metrics;
+        if(renderer->mode==Mode::Odyssey)status=nullptr;
     }
     const uint32_t start=micros();
     if(showHelp && !closing.load())drawHelp(surface,helpScroll);
