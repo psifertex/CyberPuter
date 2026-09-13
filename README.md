@@ -95,6 +95,9 @@ NODE_PATH=/opt/homebrew/lib/node_modules node preview/capture.cjs
 
 ## Research notes — 2026-09-12
 
+See the [Find My research review](docs/find-my-research.md) (2026-09-13) for
+possible informational metadata, protocol limitations, and proposed follow-up work.
+
 PlatformIO 6.1.19 and ESP32 toolchains are installed. Arduino CLI 1.4.1 currently
 has only its AVR core, so PlatformIO is the build route. An Espressif USB
 serial device was observed at `/dev/cu.usbmodem2101`; its firmware was untouched.
