@@ -37,10 +37,13 @@ streams. LABScon uses custom pixel lettering, not official logo artwork.
 
 The bounded table retains up to 96 live observations. Retention favors flagged
 matches, then named devices, then anonymous devices. Anonymous traffic cannot
-evict a live named observation. Pages favor named and flagged observations;
-otherwise spare slots page through ordinary anonymous devices. Names and flagged
-matches stay on each page when they fit. Identity ordering avoids RSSI-induced
-label shuffling. Counts describe the retained live table, not every nearby
+evict a live named observation. All views page through one ordered list: flagged
+devices first, then named devices, then ordinary anonymous devices. Pages do not
+overlap or pin preferred devices on later pages; the final page can be partial.
+Anonymous devices remain accessible even when names fill the earlier pages.
+Identity ordering avoids RSSI-induced label shuffling. Live arrivals, expiry and
+newly learned names/classifications can still move entries between pages.
+Counts describe the retained live table, not every nearby
 device. More than 96 named devices can still cause older observations to be
 replaced.
 

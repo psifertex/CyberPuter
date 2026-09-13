@@ -127,9 +127,35 @@ int main(int argc,char** argv){
         for(uint32_t t=500;t<25000;t+=137)rendererFor(mode)->draw(frame,{store.snapshot(),t,nullptr,t/6000});
     drawCity(frame,{store.snapshot(),UINT32_MAX,nullptr});
     store.clear();drawCity(frame,{store.snapshot(),3000,nullptr});
-    for(int i=0;i<20;++i){id[0]=uint8_t(i);store.observe(id,i<2?"NAMED":nullptr,i<2?5:0,-60,1000);}
-    for(int page=0;page<3;++page){const auto p=selectPage(store.snapshot(),1000,8,page);
-        assert(p.named==2 && p.pages==3 && store.snapshot()[p.indices[0]].named && store.snapshot()[p.indices[1]].named);}
+    // Regression: rain used to repeat ten preferred rows and page only two
+    // anonymous slots. Every observation must now occur on exactly one page.
+    for(int namedCount:{0,2,8,10,12,20})for(size_t capacity:{6u,8u,12u}){
+        store.clear();
+        for(int i=0;i<24;++i){id[0]=uint8_t(i);store.observe(id,i<namedCount?"NAMED":nullptr,i<namedCount?5:0,-60,1000);}
+        id[0]=31;store.observe(id,nullptr,0,-60,1000,flagged);
+        const auto first=selectPage(store.snapshot(),1000,capacity,0);
+        assert(first.total==25 && first.named==size_t(namedCount));
+        assert(first.pages==(25+capacity-1)/capacity);
+        assert(DeviceClassifier::isFlagged(store.snapshot()[first.indices[0]].classification));
+        bool seen[MAX_OBSERVATIONS]{};size_t total=0;int previousRank=3;
+        for(size_t page=0;page<first.pages;++page){
+            const auto p=selectPage(store.snapshot(),1000,capacity,page);
+            assert(p.count==std::min(capacity,size_t(25)-page*capacity));
+            for(size_t n=0;n<p.count;++n){
+                assert(!seen[p.indices[n]]);seen[p.indices[n]]=true;++total;
+                const auto& e=store.snapshot()[p.indices[n]];
+                const int rank=DeviceClassifier::isFlagged(e.classification)?2:e.named?1:0;
+                assert(rank<=previousRank);previousRank=rank;
+            }
+        }
+        assert(total==25);
+        const auto wrap=selectPage(store.snapshot(),1000,capacity,first.pages);
+        assert(wrap.indices==first.indices && wrap.page==0);
+        // Reversed packet arrival and RSSI changes alone cannot shuffle pages.
+        for(int i=23;i>=0;--i){id[0]=uint8_t(i);store.observe(id,nullptr,0,-30-i,1100);}
+        assert(selectPage(store.snapshot(),1100,capacity,0).indices==first.indices);
+        assert(selectPage(store.snapshot(),30000,capacity,100).count==0);
+    }
     store.clear();
     const char* names[]={"DECK-09","GHOST-7","NIGHT OWL","ANON-3F","PIXEL BUDS","NEON FOX"};
     for(int i=0;i<6;++i){id[0]=uint8_t(i);store.observe(id,names[i],std::strlen(names[i]),-43-i*7,1000);}

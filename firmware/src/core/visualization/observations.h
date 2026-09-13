@@ -26,6 +26,7 @@ struct Selection {
     size_t count = 0, total = 0, named = 0, page = 0, pages = 1;
 };
 // Flagged observations and names stay ahead of ordinary anonymous traffic.
+// Whole, non-overlapping pages; priority never pins a row on subsequent pages.
 // Inferred platform labels never count as advertised names.
 Selection selectPage(const Snapshot& entries, uint32_t now, size_t capacity,
                      uint32_t pageNumber);

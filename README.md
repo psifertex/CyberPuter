@@ -8,7 +8,9 @@ Firmware boots into a 240×135 neon city with LABScon signage and live BLE names
 **1 / 2 / 3** switch city, radar and signal rain without restarting scanning or
 music. Up to 96 observations are retained, favoring flagged matches and names.
 City/rain show up to 12 labels; radar shows eight plus a scope of all retained
-devices. Pages advance every six seconds; **comma / slash** page manually and
+devices. Each page is a distinct slice of the flagged-first, named-next list;
+anonymous devices follow, with no repeated pinned labels. Pages advance every
+six seconds; **comma / slash** page manually and
 **0** resumes automatic paging.
 
 **P** pauses scanning, **D** sleeps/wakes the screen, **S** shows rendering/heap

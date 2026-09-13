@@ -62,38 +62,28 @@ Selection selectPage(const Snapshot& entries, uint32_t now, size_t capacity,
                      uint32_t pageNumber) {
     Selection result;
     capacity=std::min(capacity,MAX_LABELS);
-    std::array<uint8_t,MAX_OBSERVATIONS> names{},unknown{};
-    size_t unknownCount=0,preferredCount=0;
+    std::array<uint8_t,MAX_OBSERVATIONS> ordered{};
     for(size_t i=0;i<entries.size();++i){
         const auto& e=entries[i];
         if(!e.used || uint32_t(now-e.lastSeen)>=EXPIRE_MS)continue;
-        ++result.total;
+        ordered[result.total++]=uint8_t(i);
         if(e.named)++result.named;
-        if(e.named || DeviceClassifier::isFlagged(e.classification))names[preferredCount++]=uint8_t(i);else unknown[unknownCount++]=uint8_t(i);
     }
     if(!capacity)return result;
-    // Identity ordering is stable across RSSI jitter and scanner arrival order.
-    const auto less=[&](uint8_t a,uint8_t b){
-        const bool af=DeviceClassifier::isFlagged(entries[a].classification),bf=DeviceClassifier::isFlagged(entries[b].classification);
-        return af!=bf?af:entries[a].identity<entries[b].identity;
+    // Priority changes ordering, not page membership: no repeated/pinned rows.
+    // Identity tie-breaks keep RSSI jitter and packet arrival order from shuffling.
+    const auto rank=[](const Observation& e){
+        return DeviceClassifier::isFlagged(e.classification)?2:e.named?1:0;
     };
-    std::sort(names.begin(),names.begin()+preferredCount,less);
-    std::sort(unknown.begin(),unknown.begin()+unknownCount,less);
-    if(preferredCount>=capacity){
-        result.pages=(preferredCount+capacity-1)/capacity;
-        result.page=pageNumber%result.pages;
-        const size_t start=result.page*capacity;
-        for(size_t i=start;i<std::min(start+capacity,preferredCount);++i)
-            result.indices[result.count++]=names[i];
-    } else {
-        for(size_t i=0;i<preferredCount;++i)result.indices[result.count++]=names[i];
-        const size_t remaining=capacity-preferredCount;
-        result.pages=std::max(size_t(1),(unknownCount+remaining-1)/remaining);
-        result.page=pageNumber%result.pages;
-        const size_t start=result.page*remaining;
-        for(size_t i=start;i<std::min(start+remaining,unknownCount);++i)
-            result.indices[result.count++]=unknown[i];
-    }
+    std::sort(ordered.begin(),ordered.begin()+result.total,[&](uint8_t a,uint8_t b){
+        const int ar=rank(entries[a]),br=rank(entries[b]);
+        return ar!=br?ar>br:entries[a].identity<entries[b].identity;
+    });
+    result.pages=std::max(size_t(1),(result.total+capacity-1)/capacity);
+    result.page=pageNumber%result.pages;
+    const size_t start=result.page*capacity;
+    for(size_t i=start;i<std::min(start+capacity,result.total);++i)
+        result.indices[result.count++]=ordered[i];
     return result;
 }
 } // namespace Visualization
