@@ -4,6 +4,9 @@ namespace CityAudio {
 void begin();
 void end();
 void toggleMusic(uint32_t now);
+void nextTrack();
+const char* trackName();
+const char* musicStatus();
 void toggleEffects();
 void mute();
 void adjustVolume(int delta);

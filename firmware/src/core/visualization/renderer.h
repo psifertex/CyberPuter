@@ -18,13 +18,16 @@ struct Frame {
     const Snapshot& observations;
     uint32_t now;
     const char* status; // Optional lifecycle/error/paused message in the footer.
+    uint32_t page = 0; // Shared automatic/manual page cursor across modes.
 };
 struct Renderer {
     Mode mode;
     const char* name;
     void (*draw)(Surface&, const Frame&);
 };
-// Unimplemented modes return nullptr; callers retain the working renderer.
+// All modes reuse the same surface, palette and observation snapshot.
 const Renderer* rendererFor(Mode mode);
 void drawCity(Surface& surface, const Frame& frame);
+void drawRadar(Surface& surface, const Frame& frame);
+void drawRain(Surface& surface, const Frame& frame);
 } // namespace Visualization

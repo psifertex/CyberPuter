@@ -9,20 +9,26 @@ void ObservationStore::expire(uint32_t now) {
 }
 
 ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identity,
-                               const char* name, size_t length, int rssi, uint32_t now) {
+                               const char* name, size_t length, int rssi, uint32_t now, DeviceClassifier::Match classification) {
     expire(now);
     Observation* slot = nullptr;
     for (auto& entry : entries)
         if (entry.used && entry.identity == identity) { slot = &entry; break; }
+    const bool incomingNamed = name && length && name[0];
+    const auto rank=[](bool named,DeviceClassifier::Match match){return DeviceClassifier::isFlagged(match)?2:named?1:0;};
+    const int incomingRank=rank(incomingNamed,classification);
     const bool isNew = slot == nullptr;
     const bool previouslyNamed = slot && slot->named;
     if (!slot) {
         for (auto& entry : entries) if (!entry.used) { slot = &entry; break; }
-        // Full crowd: evict the least recently observed entry, never grow the table.
+        // Full crowd: unknown traffic cannot evict a live named observation.
+        // Within each class evict the oldest observation; never grow the table.
         if (!slot) {
-            slot = &entries[0];
             for (auto& entry : entries)
-                if (uint32_t(now - entry.lastSeen) > uint32_t(now - slot->lastSeen)) slot = &entry;
+                if (rank(entry.named,entry.classification)<=incomingRank &&
+                    (!slot || rank(entry.named,entry.classification)<rank(slot->named,slot->classification) ||
+                     (rank(entry.named,entry.classification)==rank(slot->named,slot->classification) && uint32_t(now-entry.lastSeen)>uint32_t(now-slot->lastSeen)))) slot=&entry;
+            if (!slot) return ObservationEvent::None;
         }
         *slot = {};
         slot->used = true;
@@ -35,7 +41,7 @@ ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identit
     }
     // Empty scan responses must not erase an earlier advertised name. Sanitize
     // control bytes and unsupported UTF-8 bytes before rendering a tiny ASCII font.
-    if (name && length && name[0]) {
+    if (incomingNamed) {
         size_t i = 0;
         for (; i < std::min(length, NAME_BYTES - 1) && name[i]; ++i) {
             const auto ch = static_cast<unsigned char>(name[i]);
@@ -45,7 +51,47 @@ ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identit
         slot->named = true;
     }
     slot->lastSeen = now;
+    slot->classification=DeviceClassifier::strongerMatch(slot->classification,classification);
     if (slot->named && !previouslyNamed) return ObservationEvent::NameResolved;
     return isNew ? ObservationEvent::Discovered : ObservationEvent::None;
+}
+
+Selection selectPage(const Snapshot& entries, uint32_t now, size_t capacity,
+                     uint32_t pageNumber) {
+    Selection result;
+    capacity=std::min(capacity,MAX_LABELS);
+    std::array<uint8_t,MAX_OBSERVATIONS> names{},unknown{};
+    size_t unknownCount=0,preferredCount=0;
+    for(size_t i=0;i<entries.size();++i){
+        const auto& e=entries[i];
+        if(!e.used || uint32_t(now-e.lastSeen)>=EXPIRE_MS)continue;
+        ++result.total;
+        if(e.named)++result.named;
+        if(e.named || DeviceClassifier::isFlagged(e.classification))names[preferredCount++]=uint8_t(i);else unknown[unknownCount++]=uint8_t(i);
+    }
+    if(!capacity)return result;
+    // Identity ordering is stable across RSSI jitter and scanner arrival order.
+    const auto less=[&](uint8_t a,uint8_t b){
+        const bool af=DeviceClassifier::isFlagged(entries[a].classification),bf=DeviceClassifier::isFlagged(entries[b].classification);
+        return af!=bf?af:entries[a].identity<entries[b].identity;
+    };
+    std::sort(names.begin(),names.begin()+preferredCount,less);
+    std::sort(unknown.begin(),unknown.begin()+unknownCount,less);
+    if(preferredCount>=capacity){
+        result.pages=(preferredCount+capacity-1)/capacity;
+        result.page=pageNumber%result.pages;
+        const size_t start=result.page*capacity;
+        for(size_t i=start;i<std::min(start+capacity,preferredCount);++i)
+            result.indices[result.count++]=names[i];
+    } else {
+        for(size_t i=0;i<preferredCount;++i)result.indices[result.count++]=names[i];
+        const size_t remaining=capacity-preferredCount;
+        result.pages=std::max(size_t(1),(unknownCount+remaining-1)/remaining);
+        result.page=pageNumber%result.pages;
+        const size_t start=result.page*remaining;
+        for(size_t i=start;i<std::min(start+remaining,unknownCount);++i)
+            result.indices[result.count++]=unknown[i];
+    }
+    return result;
 }
 } // namespace Visualization

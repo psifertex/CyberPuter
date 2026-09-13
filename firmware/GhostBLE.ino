@@ -108,10 +108,10 @@ void setup() {
   LOG(LOG_SYSTEM, "GhostBLE starting...");
 
   UIContext::init();
+  UIContext::visualizationActive = true;
 
   M5.Lcd.setRotation(1);
-  M5.Lcd.fillScreen(0x00C4);
-  delay(250);
+  M5.Lcd.fillScreen(0);
 
   DeviceContext::deviceConfig.begin();
   NimBLEDevice::init(DeviceContext::deviceConfig.getEffectiveBleName().c_str());
@@ -127,9 +127,6 @@ void setup() {
       //    DeviceContext::deviceConfig.getFace());
   }
   
-  drawOverlay(nibblesFront, NIBBLESFRONT_WIDTH, NIBBLESFRONT_HEIGHT, 5, 0);
-  drawOverlay(nibblesHappy, NIBBLESHAPPY_WIDTH, NIBBLESHAPPY_HEIGHT, 83, 60);
-  delay(200);
 
   // Deselect LoRa chip to free shared SPI bus for SD card
   #if defined(LORA_CS_PIN) && (LORA_CS_PIN >= 0)
@@ -143,8 +140,7 @@ void setup() {
         SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
     #endif
     if (!initLogger(SD_CS_PIN)) {
-        drawThoughtBubble("NO SD CARD!", 125, 18);
-        vTaskDelay(pdMS_TO_TICKS(3000));  // 3s anzeigen dann weitermachen
+        Serial.println("SD unavailable; visualizations remain available");
     }
 #else
     initLogger(-1);
@@ -155,37 +151,12 @@ void setup() {
   
   DeviceContext::xpManager.begin();
 
-if (!DeviceContext::deviceConfig.getFirstBootDone()) {
-      drawThoughtBubble("HI I'M NIBBLES", BUBBLE_X, THOUGHT_BUBBLE_Y);
-      vTaskDelay(pdMS_TO_TICKS(2000));
-
-      clearSpeechBubble();
-  #if HAS_KEYBOARD
-      drawThoughtBubble("PRESS H FOR HELP!", BUBBLE_X, THOUGHT_BUBBLE_Y);
-  #else
-      drawThoughtBubble("HOLD M5 FOR HELP!", BUBBLE_X, THOUGHT_BUBBLE_Y);
-  #endif
-      vTaskDelay(pdMS_TO_TICKS(3000));
-      clearSpeechBubble();
-
-    DeviceContext::deviceConfig.setFirstBootDone(true);
-} else {
-    nibblesSpeechShow(SpeechContext::WELCOME_BACK);
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    clearSpeechBubble();
-}
-
-  showScanIcon();
-
   logEnableTarget(TARGET_WEB);
-
-  nibblesSpeechBegin();
-
   ScanContext::scanIsRunning = false;
-  delay(500);
-
-  // To Update Wifi Logo to ON
-  showFindingCounter(ScanContext::targetConnects, ScanContext::susDevice, ScanContext::leakedCounter);
+  if (!VisualizationView::open(Visualization::Mode::City)) {
+    UIContext::visualizationActive = false;
+    MenuController::open();
+  }
 
   // Start Scan Task (FreeRTOS)
   xTaskCreatePinnedToCore(scanTask, "ScanTask", 16000, nullptr, 1, &scanTaskHandle, 1);
@@ -230,6 +201,15 @@ void loop() {
     return;
   }
 
+  // The visualization replaces the old mascot home screen, including returns
+  // from legacy utilities. Those utilities remain available through the menu.
+  if (!MenuController::isOpen() && !ApproachView::isOpen() &&
+      !FinderListView::isOpen() && !ConnectedDeviceView::isOpen() &&
+      !SusDeviceView::isOpen() && !FileManagerView::isOpen() &&
+      !UIContext::helpOverlayVisible) {
+    if (!VisualizationView::open()) MenuController::open();
+    return;
+  }
   // ── Approach View — periodischer Scan + Redraw, unabhängig von Tasteneingaben ──
   if (ApproachView::isOpen()) {
     ApproachView::update();

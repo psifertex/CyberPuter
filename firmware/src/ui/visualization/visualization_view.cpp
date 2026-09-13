@@ -22,6 +22,8 @@ std::atomic<bool> activeNames{false}, activeApplied{false};
 std::atomic<uint8_t> soundEvents{0}; // Coalesced discoveries/name resolutions.
 bool restoreScan = false, displayOn = true, stats = false;
 bool showHelp=false;
+uint32_t audioNoticeAt=0;
+bool audioNotice=false;
 bool configured = false; // ScanTask only.
 const Renderer* renderer = rendererFor(Mode::City); // UI only.
 ObservationStore store;
@@ -34,6 +36,8 @@ struct CanvasSurface final : Surface {
     }
 } surface;
 uint32_t lastFrame=0, framePeriod=50, lastCostUs=0;
+uint32_t page=0,pageAt=0;
+bool autoPage=true;
 
 void copyObservations(uint32_t now) {
     portENTER_CRITICAL(&storeMux);
@@ -41,6 +45,33 @@ void copyObservations(uint32_t now) {
     snapshot=store.snapshot();
     portEXIT_CRITICAL(&storeMux);
 }
+class ObservationCallbacks final : public NimBLEScanCallbacks {
+    void onResult(const NimBLEAdvertisedDevice* device) override {
+        if(!device || closing.load() || device->getAddress().equals(NimBLEDevice::getAddress()))return;
+        std::array<uint8_t,7> identity{};
+        const auto address=device->getAddress();
+        std::memcpy(identity.data(),address.getVal(),6);identity[6]=address.getType();
+        const auto name=device->getName();
+        using namespace DeviceClassifier;
+        auto match=classifyName(name);
+        for(uint8_t i=0;i<device->getServiceUUIDCount();++i)
+            match=strongerMatch(match,classifyService(device->getServiceUUID(i).toString()));
+        for(uint8_t i=0;i<device->getServiceDataCount();++i){
+            const auto data=device->getServiceData(i);
+            match=strongerMatch(match,classifyServiceData(device->getServiceDataUUID(i).toString(),reinterpret_cast<const uint8_t*>(data.data()),data.size()));
+        }
+        for(uint8_t i=0;i<device->getManufacturerDataCount();++i){
+            const auto data=device->getManufacturerData(i);
+            match=strongerMatch(match,classifyManufacturer(reinterpret_cast<const uint8_t*>(data.data()),data.size()));
+        }
+        const uint32_t now=millis();
+        portENTER_CRITICAL(&storeMux);
+        const auto event=store.observe(identity,name.data(),name.size(),device->getRSSI(),now,match);
+        portEXIT_CRITICAL(&storeMux);
+        if(event==ObservationEvent::NameResolved)soundEvents.fetch_or(2);
+        else if(event==ObservationEvent::Discovered)soundEvents.fetch_or(1);
+    }
+} observationCallbacks;
 } // namespace
 
 bool isOpen() { return opened.load(); }
@@ -48,6 +79,7 @@ bool setMode(Visualization::Mode mode) {
     const auto* next=Visualization::rendererFor(mode);
     if (!next) return false;
     renderer=next; // Every mode reuses the same surface and observation table.
+    page=0;pageAt=millis();autoPage=true;
     return true;
 }
 bool open(Visualization::Mode mode) {
@@ -91,7 +123,7 @@ bool serviceScanner() {
     if(!isOpen())return false;
     auto* scan=NimBLEDevice::getScan();
     if(closing.load()) {
-        if(configured && scan){scan->clearResults();scan->setMaxResults(255);}
+        if(configured && scan){scan->clearResults();scan->setScanCallbacks(nullptr);scan->setMaxResults(255);scan->setScanResponseTimeout(10240);}
         configured=false;
         ScanContext::scanCancelRequested=false;
         stopped=true; // All radio access/cleanup finishes before the UI exits.
@@ -99,7 +131,9 @@ bool serviceScanner() {
     }
     if(!scan){scanFailed=true;ready=true;return true;}
     if(!configured){
-        scan->clearResults();scan->setMaxResults(MAX_OBSERVATIONS);
+        scan->clearResults();scan->setMaxResults(0);
+        scan->setScanCallbacks(&observationCallbacks,false);
+        scan->setScanResponseTimeout(150);
         // Both scan modes avoid pairing, GATT and connections. Active mode
         // requests scan responses, which may contain an advertised local name.
         scan->setPhy(NimBLEScan::Phy::SCAN_1M);
@@ -112,24 +146,13 @@ bool serviceScanner() {
     scan->setActiveScan(useActive); // Only change settings between windows.
     activeApplied=useActive;
     // One-second windows bound close/pause latency after the legacy scan yields.
-    // The retained NimBLE list and the observation table are both capped at 24.
+    // Callback-only delivery prevents the first anonymous arrivals filling a
+    // retained result list before later named advertisements can be considered.
     if(!scan->start(1000)) {scanFailed=true;return true;}
     scanFailed=false;
-    while(scan->isScanning())vTaskDelay(pdMS_TO_TICKS(20));
-    const auto results=scan->getResults();
-    for(int i=0;i<results.getCount();++i){
-        const auto* device=results.getDevice(i);
-        if(!device || device->getAddress().equals(NimBLEDevice::getAddress()))continue;
-        std::array<uint8_t,7> identity{};
-        const auto address=device->getAddress();
-        std::memcpy(identity.data(),address.getVal(),6);identity[6]=address.getType();
-        const auto name=device->getName();
-        const uint32_t now=millis();
-        portENTER_CRITICAL(&storeMux);
-        const auto event=store.observe(identity,name.data(),name.size(),device->getRSSI(),now);
-        portEXIT_CRITICAL(&storeMux);
-        if(event==ObservationEvent::NameResolved)soundEvents.fetch_or(2);
-        else if(event==ObservationEvent::Discovered)soundEvents.fetch_or(1);
+    while(scan->isScanning()){
+        if(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<32*1024){scan->stop();scanFailed=true;}
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
     scan->clearResults();
     return true;
@@ -138,8 +161,12 @@ void handleKey(char key) {
     if(closing.load())return;
     if(key=='`'||key=='m'||key=='M'||key=='q'||key=='Q'){close();return;}
     if(key=='s'||key=='S')paused=!paused.load();
+    if(key>='1'&&key<='3')setMode(key=='1'?Mode::City:key=='2'?Mode::Radar:Mode::Rain);
+    if(key==','||key=='/'){autoPage=false;page+=key=='/'?1:(page?uint32_t(-1):0);}
+    if(key=='0'){autoPage=true;pageAt=millis();}
     if(key=='a'||key=='A')activeNames=!activeNames.load();
-    if(key=='b'||key=='B')CityAudio::toggleMusic(millis());
+    if(key=='b'||key=='B'){CityAudio::toggleMusic(millis());audioNotice=true;audioNoticeAt=millis();}
+    if(key=='n'||key=='N'){CityAudio::nextTrack();audioNotice=true;audioNoticeAt=millis();}
     if(key=='f'||key=='F')CityAudio::toggleEffects();
     if(key=='x'||key=='X')CityAudio::mute();
     if(key=='-')CityAudio::adjustVolume(-16);
@@ -151,7 +178,6 @@ void handleKey(char key) {
         NetworkContext::displayEnabled=displayOn;
         if(displayOn)M5.Lcd.wakeup();else M5.Lcd.sleep();
     }
-    // TODO: Bind mode cycling here once Radar and Rain have measured budgets.
 }
 void update() {
     if(!isOpen())return;
@@ -168,6 +194,7 @@ void update() {
         return;
     }
     const uint32_t now=millis();
+    if(autoPage && uint32_t(now-pageAt)>=6000){++page;pageAt=now;}
     // Audio timing remains independent of redraw cadence and display sleep.
     const uint8_t events=soundEvents.exchange(0);
     if(events)CityAudio::notify(events&2);
@@ -181,7 +208,11 @@ void update() {
     else if(scanFailed.load())status="SCAN ERROR / RETRYING";
     else if(paused.load())status="SCAN PAUSED / S TO RESUME";
     else if(activeNames.load()!=activeApplied.load())status="NAME MODE CHANGES NEXT SCAN";
-    else if(showHelp)status="A NAMES B MUSIC F FX X MUTE -/=";
+    else if(showHelp)status=(now/3000)%2?"A NAMES B MUSIC N NEXT F FX X MUTE":"1 CITY 2 RADAR 3 RAIN ,/ PAGE 0 AUTO";
+    else if(audioNotice && uint32_t(now-audioNoticeAt)<6000)
+        status=(uint32_t(now-audioNoticeAt)/2000)%2?CityAudio::trackName():CityAudio::musicStatus();
+    else if(CityAudio::musicEnabled() && std::strcmp(CityAudio::musicStatus(),"PLAYING SD")!=0)
+        status=CityAudio::musicStatus();
     else if(stats){
         std::snprintf(metrics,sizeof(metrics),"%lu MS / %u KB / ESC BACK",
                       static_cast<unsigned long>(lastCostUs/1000),unsigned(ESP.getFreeHeap()/1024));
@@ -195,7 +226,7 @@ void update() {
         status=metrics;
     }
     const uint32_t start=micros();
-    renderer->draw(surface,{snapshot,now,status});
+    renderer->draw(surface,{snapshot,now,status,page});
     {
         UIContext::DisplayGuard displayGuard(true);
         if (!displayGuard) return;

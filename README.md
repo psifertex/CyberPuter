@@ -4,30 +4,35 @@ A LABScon costume display for the M5Stack Cardputer ADV, based on GhostBLE.
 
 ## City mode
 
-The first firmware mode is implemented: a 240×135 neon city with LABScon
-signage, advertised BLE names, scrolling signs, discovery flashes and fading
-stale observations. From the home screen press **V**, or select **CYBERPUTER →
-LABScon Neon City** from the menu.
+Firmware boots into a 240×135 neon city with LABScon signage and live BLE names.
+**1 / 2 / 3** switch city, radar and signal rain without restarting scanning or
+music. Up to 96 observations are retained, favoring flagged matches and names.
+City/rain show up to 12 labels; radar shows eight plus a scope of all retained
+devices. Pages advance every six seconds; **comma / slash** page manually and
+**0** resumes automatic paging.
 
 **S** pauses scanning, **D** sleeps/wakes the screen, **P** shows rendering/heap
 metrics, and **Esc/backtick**, **M**, or **Q** returns to the menu. The previous
 GhostBLE scan-enabled state is restored on exit.
 
 **A** toggles active scans to request additional BLE names. **B** toggles the
-cyberpunk synth loop, **F** toggles discovery/name sounds, **X** silences both,
+SD soundtrack, **N** selects the next track, **F** toggles discovery/name sounds, **X** silences both,
 and **- / =** adjusts city volume. **H** shows the key reference. Audio starts
 off and respects GhostBLE's master Audio setting. Active scans do not pair or
 connect; some devices still will not supply names.
 
 ![Actual C++ city renderer with synthetic observations](preview/city-firmware-240x135.png)
+![Actual C++ radar renderer with synthetic observations](preview/radar-firmware-240x135.png)
+![Actual C++ rain renderer with synthetic observations](preview/rain-firmware-240x135.png)
 
-City has a shared, hardware-independent renderer interface and bounded
-observation storage. Radar and signal rain are TODOs; the renderer lookup
-rejects them until implemented. A single 4-bit framebuffer needs 16,200 bytes.
+All views share a hardware-independent renderer interface and bounded
+observation storage. A single 4-bit framebuffer needs 16,200 bytes.
 The 20 FPS target falls back to 10 FPS if frame cost exceeds its budget.
 Actual frame rate and heap stability still need validation on the device.
 
 See [city-mode design, controls and validation](docs/city-mode.md).
+See also [SD soundtrack setup](docs/soundtrack.md) and the
+[platform watchlist with sources and limitations](docs/device-watchlist.md).
 
 ## Build
 
@@ -38,12 +43,12 @@ pio run -d firmware -e ghostble_cardputer
 The application binary is
 `firmware/.pio/build/ghostble_cardputer/firmware.bin`.
 This is an application image, not a merged image to flash at address zero.
-The initial city build was flashed with approval; the active-name/audio update
-is built but not yet flashed. Ask before every flash; no backups unless requested.
+Earlier builds were flashed with approval. This three-view/SD/watchlist update
+has not been flashed. Ask before every flash; no backups unless requested.
 
 Both the unmodified baseline and the city firmware compile successfully.
 Host tests cover bounded storage, repeated observations, names, RSSI smoothing,
-expiry and clock rollover, unavailable renderers, drawing bounds, and audio
+expiry and clock rollover, named-device paging, all renderers' drawing bounds, and audio
 scheduling/mute/effect rate limits:
 
 ```sh
@@ -71,7 +76,7 @@ That fix was excluded after clarification; there is no pending GhostBLE patch.
 Open [preview/index.html](preview/index.html) directly in a browser for the
 three animated concepts. They use synthetic data, exact 240×135 framebuffers,
 scale/pause/crowd controls, and PNG export. The original radar/rain concepts
-remain here as references for the future firmware modes. LABScon uses custom
+remain here as design references. LABScon uses custom
 pixel lettering rather than the official logo artwork.
 
 The browser preview checks and captures can be reproduced in this environment:

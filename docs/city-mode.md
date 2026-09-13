@@ -1,132 +1,88 @@
-# LABScon city mode
+# LABScon visualizations
 
-Firmware implementation: `firmware/` is a tracked import of GhostBLE
-`0b4ad45c43517395098f103180773e06b3961af4`. Its MIT license remains in
-`firmware/LICENSE`. `research/GhostBLE` is the unchanged reference submodule.
-
-## Use
-
-From GhostBLE's home screen, press **V**, or choose **CYBERPUTER → LABScon Neon
-City** in the main menu. The city borrows the existing scan task after any
-ongoing analysis finishes/yields; a footer indicates the transition. A new
-legacy GATT analysis is not started while the city is open.
+Firmware boots into city, replacing the original mascot home screen. GhostBLE
+utilities remain in the menu. All views share observations, one framebuffer and
+the audio playback session.
 
 | Key | Action |
 | --- | --- |
-| Esc/backtick, M or Q | Return to menu after scanner cleanup; restore the previous scan-enabled state |
-| S | Pause/resume BLE scanning (animation continues; old signs still expire) |
-| D | Sleep/wake the display |
-| P | Toggle render-time and free-heap readout |
-| A | Toggle active name scans; applies at the next scan window (unpause with S if needed) |
-| B | Toggle the original procedural cyberpunk synth loop |
-| F | Toggle two-note discovery / name-resolution effects |
-| X | Immediately silence city music and effects |
-| - / = (or +) | Lower / raise city volume in steps of 16, bounded to 0–160 |
-| H | Toggle the compact key reference in the footer |
+| 1 / 2 / 3 | City / radar / signal rain |
+| Comma / slash | Previous / next device page; pauses automatic paging |
+| 0 | Resume automatic paging every six seconds |
+| A | Toggle passive / active scanning to request advertised names |
+| S | Pause scanning; animations continue and stale observations expire |
+| B / N | Toggle music / next SD track |
+| F / X | Toggle discovery effects / mute music and effects |
+| - / = | Lower / raise volume |
+| H / P | Key reference / rendering time and free heap |
+| D | Sleep / wake display; audio continues |
+| Esc/backtick, M, Q | Open tools/settings menu |
 
-The renderer targets 240×135 pixels. LABScon uses custom pixel lettering.
-Advertised device names appear on six signs; long names scroll. More than six
-observations rotate through the signs every eight seconds. New discoveries
-flash briefly, weak signals use amber, and observations fade after 12 seconds
-and disappear after 20. Unnamed devices use `ANON-xxxx` session labels.
+## Crowds and names
 
-City starts in passive BLE mode. **A** enables active scans, transmitting scan
-requests to receive responses that may contain device names. It does not pair,
-make GATT connections, or add city observations to SD/web logs. Devices that
-only expose a name over GATT (or no name at all) can still remain unnamed.
-Names from a later response replace the corresponding ANON label and survive
-subsequent nameless observations until the entry expires. A pre-existing
-legacy analysis may finish its current device before handing over the radio.
-The city's fresh table updates repeated observations rather than inheriting
-the analysis layer's deduplication. Identity is address plus address type, not
-the name; rotating BLE addresses can appear as new observations.
+City shows six large signs in small scenes, twelve compact signs in crowds.
+Radar lists eight labels and plots all retained observations; angles are
+decorative, **not measured bearings**. Rain has twelve name labels over glyph
+streams. LABScon uses custom pixel lettering, not official logo artwork.
+
+The bounded table retains up to 96 live observations. Retention favors flagged
+matches, then named devices, then anonymous devices. Anonymous traffic cannot
+evict a live named observation. Pages favor named and flagged observations;
+otherwise spare slots page through ordinary anonymous devices. Names and flagged
+matches stay on each page when they fit. Identity ordering avoids RSSI-induced
+label shuffling. Counts describe the retained live table, not every nearby
+device. More than 96 named devices can still cause older observations to be
+replaced.
+
+Names scroll within labels. ANON-xxxx means a real observation without an
+advertised name, not injected demo data. Advertised names survive nameless
+packets, fade after 12 seconds in city and expire after 20 seconds. Rotating
+addresses can appear as new observations. Names are bounded to 24 ASCII
+characters; unsupported bytes display as question marks.
+
+Active mode transmits BLE scan requests, but does not pair or connect. Devices
+that expose names only over GATT, or no name at all, can remain anonymous.
+Callback-only delivery prevents an initial anonymous result list from excluding
+later named advertisements. A 150 ms scan-response timeout limits pending
+responses; low-heap detection stops a scan window for retry.
+
+## Flagged platforms
+
+See [watchlist research and limitations](device-watchlist.md). Matches are
+heuristic identifiers, never proof of malicious intent. Amber labels, an
+exclamation marker and slowly pulsing borders/markers identify flagged matches.
+Ordinary new discoveries do not blink, and weak RSSI no longer uses amber.
+Inferred platform labels start with a question mark and are not counted as
+advertised names. Mesh/vehicle/wearable recognition is informational.
 
 ## Sound
 
-Music and effects start **off** on every entry. The music is an original
-procedural minor-key loop with bass, arpeggio and electronic percussion at
-approximately 112 BPM. **F** enables separate discovery chirps; acquiring a
-name gets a higher two-note resolution sound. Repeated packets do not retrigger
-effects, and crowds are coalesced to at most one effect every 750 ms.
+See [soundtrack setup and licensing](soundtrack.md) for SD tracks and conversion.
+Music and effects start off, respect the master Audio toggle, and continue across
+number-key view changes without restarting. Effects are coalesced to at most one
+two-note event per 750 ms. Leaving the visualization stops audio.
 
-City respects GhostBLE's master **Audio** toggle; if it is off, enable it in
-the main menu first. City volume starts at the lower of the alarm volume and
-64. It is independent thereafter and bounded to 160. The footer shows requested
-music/effect states and volume, plus the scanner's applied `ACT`/`PAS` mode.
-Music waits for scan handoff and any final legacy alert before starting.
+## Budgets and validation
 
-Sound continues while the display sleeps or scanning is paused. **X** or
-leaving the city stops its channels immediately and restores the prior master
-and per-channel speaker volumes. City uses channels 4–7 and fixed flash-resident
-waveforms; it does not allocate streaming audio buffers or block waiting for
-notes. UI stalls skip missed beats instead of replaying a backlog. The existing
-menu and analysis sounds outside city are unchanged.
+Core renderers and selection have no Arduino dependency. One shared 4-bit
+240×135 canvas occupies 16,200 bytes. Switching views allocates no second canvas.
+The live table is copied to a snapshot under a short critical section. Frames
+target 20 FPS, dropping to a 10 FPS budget if drawing/pushing costs over 40 ms.
+These are limits, not measured hardware performance claims.
 
-## Architecture and budgets
-
-- `src/core/visualization/observations.*`: allocation-free, 24-entry observation
-  table; sanitized 24-character names, RSSI smoothing, expiry, oldest eviction.
-  A table occupies 1,152 bytes on the tested host ABI.
-- `src/core/visualization/renderer.*`: hardware-independent `Surface`, `Frame`,
-  and `Renderer` interface. `rendererFor()` is the single mode lookup. The city
-  is procedural pixel art with a fixed 16-color palette and no bitmap assets.
-- `src/core/visualization/soundtrack.*`: allocation-free note scheduler and
-  coalesced event sounds. `src/ui/visualization/city_audio.*` adapts its four
-  voices to the M5 speaker and manages volume/channel ownership.
-- `src/ui/visualization/visualization_view.*`: M5Canvas adapter and asynchronous
-  scan-task handoff. One 4-bit sprite occupies 16,200 bytes plus palette/library
-  overhead. The live table and UI snapshot are separate, about 2.3 KB combined,
-  copied under a short critical section. NimBLE retains at most 24 scan results.
-- Legacy drawing helpers and city LCD pushes share a recursive display mutex;
-  legacy drawing is suppressed while the city owns the screen. No mascot task
-  is forcibly deleted. Screenshot servicing pauses until this mode closes.
-- A frame starts at most every 50 ms (20 FPS target). A measured render+push
-  cost above 40 ms switches to a 100 ms budget (10 FPS). This is a limit and
-  fallback, not a claim of measured hardware frame rate.
-- The sprite is allocated once on entry, freed on exit, and shared by future
-  renderers. Entry requires a sufficiently large internal-memory block and
-  48 KiB remaining heap headroom. Allocation failure leaves the previous view
-  in place and reports the reason on Serial.
-
-## Deferred renderers
-
-- TODO **Radar**: implement `Mode::Radar` using the same observation snapshot,
-  palette and surface. Decorative angles must not imply measured bearing.
-- TODO **Signal rain**: implement `Mode::Rain` with a large LABScon wordmark and
-  device-name glyph streams using the same buffer.
-- TODO expose mode cycling only after measuring frame time, minimum free heap,
-  and repeated transitions on the ADV. `setMode()` already supports selecting
-  a registered renderer without reallocating the framebuffer. Missing modes
-  return false and keep the current renderer; no placeholder mode can blank it.
-- TODO evaluate a Wi-Fi adapter if desired.
-
-## Build and validation
+Build with `pio run -d firmware -e ghostble_cardputer`. Host tests:
 
 ```sh
-pio run -d firmware -e ghostble_cardputer
 cmake -S tests -B build/host
 cmake --build build/host
 ctest --test-dir build/host --output-on-failure
 ```
 
-Host tests run with AddressSanitizer/UndefinedBehaviorSanitizer and cover
-repeated observations, distinct address types, missing/long/control-byte names,
-bounded capacity and eviction, expiry across millisecond rollover, unavailable
-modes, and framebuffer bounds across animation phases. Passing an output path
-to `build/host/visualization_test` writes a 240×135 PPM from the actual C++ city
-renderer using synthetic observations.
+Sanitized tests cover storage, names, priority/paging, expiry/rollover, effects
+and pixel bounds in all views. Three optional output arguments to
+`build/host/visualization_test` write city/radar/rain PPMs with synthetic fixtures.
 
-Tests also cover unnamed-to-named observation events, music mute/start/stop,
-clock rollover, missed-beat skipping, effect coalescing and rate limits, and
-canceling an effect before its second note.
-
-Before calling this hardware-validated, check entry during an active legacy
-scan, rapid entry/exit, pause/resume, display sleep, dense BLE environments,
-allocation failure, and sustained frame/heap readings on the Cardputer ADV.
-The initial city version was flashed with user approval. This active-name/audio
-update has not been flashed. Validate active name acquisition, music/effects
-together, volume/master mute, sound during display sleep, and sound cleanup on
-exit on the ADV before calling the update hardware-validated.
-
-The separately supplied GhostESP setup-wizard report does not apply to this
-codebase and was excluded at the user's request.
+Hardware validation remains necessary: dense active scans, view switching,
+minimum heap, SD latency/removal, simultaneous music/effects, display sleep,
+menu cleanup and long-running stability. **Do not flash without fresh user
+approval. No backup is requested.** Wi-Fi visualization is not implemented.

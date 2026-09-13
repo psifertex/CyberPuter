@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 namespace Visualization {
 const uint32_t PALETTE[16] = {0x03040b,0x0c0d1c,0x28233e,0x32304e,
@@ -44,6 +45,7 @@ static void text(Surface& s, const char* str, int x, int y, uint8_t color) {
             else if (ch == '+') {std::memset(special,8,5);special[2]=0x3e;}
             else if (ch == '/') {special[0]=0x40;special[1]=0x20;special[2]=8;special[3]=4;special[4]=2;}
             else if (ch == '.') special[2]=0x60;
+            else if (ch == '!') special[2]=0x5f;
             else if (ch != ' ') {special[0]=2;special[1]=1;special[2]=0x51;special[3]=9;special[4]=6;}
         }
         for(int col=0;col<5;++col) for(int row=0;row<7;++row)
@@ -61,12 +63,19 @@ static void circle(Surface& s,int cx,int cy,int radius,uint8_t c) {
         ++y;if(e<0)e+=2*y+1;else{--x;e+=2*(y-x)+1;}
     }
 }
+static const char* displayName(const Observation& e,char (&buffer)[NAME_BYTES+2]) {
+    if(!e.named && e.classification.evidence!=DeviceClassifier::Evidence::None){
+        std::snprintf(buffer,sizeof(buffer),"?%s",DeviceClassifier::label(e.classification.platform));return buffer;
+    }
+    return e.name;
+}
 void drawCity(Surface& s, const Frame& frame) {
     const uint32_t t=frame.now;
     s.fill(0,0,WIDTH,HEIGHT,Background);
-    text(s,"GHOST DISTRICT",5,4,Violet);
+    text(s,"GHOST CITY",5,4,Violet);
     size_t count=0;for(const auto& e:frame.observations)if(e.used && uint32_t(t-e.lastSeen)<EXPIRE_MS)++count;
-    char buffer[40];std::snprintf(buffer,sizeof(buffer),"BLE %02u",unsigned(count));text(s,buffer,199,4,Cyan);
+    const auto selection=selectPage(frame.observations,t,count>6?12:6,frame.page);
+    char buffer[40];std::snprintf(buffer,sizeof(buffer),"N%u U%u %u/%u",unsigned(selection.named),unsigned(count-selection.named),unsigned(selection.page+1),unsigned(selection.pages));text(s,buffer,112,4,Cyan);
     s.fill(4,15,232,1,Grid);
     for(int i=0;i<40;++i)pixel(s,(i*71)%240,20+(i*19)%75,i%4?Dim:Window);
     circle(s,196,40,15,VioletDim);circle(s,196,40,13,Dim);
@@ -78,27 +87,33 @@ void drawCity(Surface& s, const Frame& frame) {
             s.fill(wx,wy,2,3,(wx+wy+b*7+t/3000)%7<2?(b%2?Window:TealDim):Dim);
     }
     s.fill(116,20,1,11,Violet);s.fill(115,19,3,2,Pink);
-    s.fill(88,37,59,24,Sign);box(s,88,37,59,24,Violet);
-    text(s,"LABScon",97,41,White);text(s,"2026",106,52,Pink);
-    // Six fixed sign locations, rotating through the bounded table every 8 s.
-    // Stable table order avoids sign shuffling as RSSI fluctuates.
+    const int brandY=count>6?22:37;
+    s.fill(88,brandY,59,24,Sign);box(s,88,brandY,59,24,Violet);
+    text(s,"LABScon",97,brandY+4,White);text(s,"2026",106,brandY+15,Pink);
+    // Named devices lead each page; crowded scenes use twelve compact signs.
     static const int signs[][3]={{4,78,11},{155,70,12},{37,95,14},{151,101,13},{66,65,13},{3,49,12}};
-    size_t visible=0;const size_t offset=count>6?(t/8000*6)%MAX_OBSERVATIONS:0;
-    for(size_t n=0;n<MAX_OBSERVATIONS && visible<6;++n){
-        const auto& e=frame.observations[(n+offset)%MAX_OBSERVATIONS];
+    size_t visible=0;
+    for(size_t n=0;n<selection.count;++n){
+        const auto& e=frame.observations[selection.indices[n]];
         const uint32_t age=t-e.lastSeen;
         if(!e.used||age>=EXPIRE_MS)continue;
-        const int x=signs[visible][0],y=signs[visible][1],maxChars=signs[visible][2];
-        const size_t length=std::strlen(e.name),shown=std::min(length,size_t(maxChars));
+        const int x=count>6?4+int(visible%3)*80:signs[visible][0];
+        const int y=count>6?48+int(visible/3)*16:signs[visible][1];
+        const int maxChars=count>6?11:signs[visible][2];
+        char derived[NAME_BYTES+2];const char* source=displayName(e,derived);
+        const bool flagged=DeviceClassifier::isFlagged(e.classification);
+        const size_t length=std::strlen(source),shown=std::min(length,size_t(maxChars-(flagged?1:0)));
         // Scroll long names inside the sign rather than drawing into its neighbour.
         const size_t scroll=length>shown?(t/400)%(length-shown+4):0;
         const size_t start=std::min(scroll,length-shown);
-        char name[NAME_BYTES];std::memcpy(name,e.name+start,shown);name[shown]='\0';
+        char name[NAME_BYTES];std::memcpy(name,source+start,shown);name[shown]='\0';
         uint8_t color=visible%2?Pink:Cyan;
-        if(e.rssi < -80)color=Amber;
         if(age>12000)color=visible%2?VioletDim:TealDim;
-        if(uint32_t(t-e.firstSeen)<1200 && (t/150)%2)color=White;
-        s.fill(x,y,int(shown)*6+7,13,Sign);box(s,x,y,int(shown)*6+7,13,color);text(s,name,x+4,y+3,color);
+        if(flagged)color=Amber;
+        const int marker=flagged?6:0,w=int(shown)*6+7+marker;
+        s.fill(x,y,w,13,Sign);box(s,x,y,w,13,flagged && (t/700)%2?VioletDim:color);
+        if(flagged)text(s,"!",x+3,y+3,Amber);
+        text(s,name,x+4+marker,y+3,color);
         ++visible;
     }
     for(int i=0;i<27;++i){const int x=(i*43+t/167)%240,y=18+(i*29+t/24)%99;
@@ -110,14 +125,65 @@ void drawCity(Surface& s, const Frame& frame) {
     else{std::snprintf(buffer,sizeof(buffer),"LABScon / %02u SIGNALS ALIVE",unsigned(count));text(s,buffer,5,125,Violet);}
     if(!count && !frame.status)text(s,"LISTENING...",78,102,Cyan);
 }
+static void viewHeader(Surface& s,const char* title,const Selection& p) {
+    text(s,title,4,4,Violet);
+    char b[30];std::snprintf(b,sizeof(b),"N%u U%u %u/%u",unsigned(p.named),unsigned(p.total-p.named),unsigned(p.page+1),unsigned(p.pages));
+    text(s,b,112,4,Cyan);s.fill(0,15,240,1,Grid);
+}
+static void viewFooter(Surface& s,const Frame& f) {
+    s.fill(0,122,240,13,Sign);text(s,f.status?f.status:"1 CITY 2 RADAR 3 RAIN",4,125,Amber);
+}
+static void label(Surface& s,const Observation& e,int x,int y,size_t width,uint32_t now,uint8_t color) {
+    const bool flagged=DeviceClassifier::isFlagged(e.classification);
+    if(flagged){text(s,"!",x,y,(now/700)%2?VioletDim:Amber);x+=6;--width;color=Amber;}
+    char derived[NAME_BYTES+2];const char* source=displayName(e,derived);
+    char b[NAME_BYTES+2];const size_t len=std::strlen(source),n=std::min(len,width);
+    const size_t start=len>n?std::min(size_t(now/400)%(len-n+4),len-n):0;
+    std::memcpy(b,source+start,n);b[n]=0;text(s,b,x,y,color);
+}
+void drawRadar(Surface& s,const Frame& f) {
+    s.fill(0,0,WIDTH,HEIGHT,Background);
+    const auto p=selectPage(f.observations,f.now,8,f.page);viewHeader(s,"LABScon RADAR",p);
+    for(int r=15;r<=45;r+=15)circle(s,54,67,r,Grid);
+    s.fill(9,67,91,1,Grid);s.fill(54,22,1,91,Grid);
+    const float angle=(f.now%6000)*6.2831853f/6000;
+    for(int r=0;r<46;++r)pixel(s,54+int(std::cos(angle)*r),67+int(std::sin(angle)*r),TealDim);
+    for(const auto& e:f.observations){
+        if(!e.used||uint32_t(f.now-e.lastSeen)>=EXPIRE_MS)continue;
+        uint32_t hash=2166136261u;for(auto b:e.identity)hash=(hash^b)*16777619u;
+        const float a=(hash%360)*0.017453293f;const int r=std::clamp((-int(e.rssi)-25)/2,5,44);
+        const int x=54+int(std::cos(a)*r),y=67+int(std::sin(a)*r);
+        const bool flagged=DeviceClassifier::isFlagged(e.classification);
+        pixel(s,x,y,flagged?Amber:e.named?Cyan:VioletDim);
+        if(flagged)circle(s,x,y,(f.now/700)%2?3:2,Amber);
+        else if(e.named)circle(s,x,y,2,Cyan);
+    }
+    text(s,"ART NOT BEARING",9,114,VioletDim);
+    for(size_t i=0;i<p.count;++i)label(s,f.observations[p.indices[i]],112,23+int(i)*12,21,f.now,i%2?Pink:Cyan);
+    viewFooter(s,f);
+}
+void drawRain(Surface& s,const Frame& f) {
+    s.fill(0,0,WIDTH,HEIGHT,Background);
+    const auto p=selectPage(f.observations,f.now,12,f.page);
+    for(size_t i=0;i<p.count;++i){
+        const auto& e=f.observations[p.indices[i]];const size_t len=std::strlen(e.name);
+        for(int j=0;j<7 && len;++j){char ch[2]={e.name[(f.now/240+j)%len],0};
+            text(s,ch,8+int(i)*19,18+int((f.now/35+i*29+j*11)%99),j==0?TealDim:Dim);}
+    }
+    s.fill(0,0,240,17,Background);viewHeader(s,"SIGNAL RAIN",p);
+    s.fill(83,22,74,15,Sign);box(s,83,22,74,15,Pink);text(s,"LABScon",99,26,White);
+    for(size_t i=0;i<p.count;++i){int x=3+int(i%2)*120,y=44+int(i/2)*12;
+        s.fill(x,y-1,115,10,Sign);label(s,f.observations[p.indices[i]],x+2,y,18,f.now,i%2?Pink:Cyan);}
+    viewFooter(s,f);
+}
 const Renderer* rendererFor(Mode mode) {
     static const Renderer CITY{Mode::City,"Neon city",drawCity};
+    static const Renderer RADAR{Mode::Radar,"Neon radar",drawRadar};
+    static const Renderer RAIN{Mode::Rain,"Signal rain",drawRain};
     switch(mode){
         case Mode::City:return &CITY;
-        // TODO: Neon radar — share Surface/Snapshot; angles must be decorative.
-        case Mode::Radar:return nullptr;
-        // TODO: Signal rain — share Surface/Snapshot; profile frame time first.
-        case Mode::Rain:return nullptr;
+        case Mode::Radar:return &RADAR;
+        case Mode::Rain:return &RAIN;
     }
     return nullptr;
 }

@@ -8,8 +8,8 @@ struct SoundSink {
     virtual void note(Voice voice, uint16_t hz, uint16_t durationMs) = 0;
     virtual void stop(Voice voice) = 0;
 };
-// Original procedural minor-key soundtrack. No samples, heap, waits or audio
-// task. The platform speaker mixes four short, finite-duration voices.
+// Audio toggles and crowd-rate-limited effects. Recorded music playback is
+// handled by the platform's bounded PCM queue in CityAudio.
 class Soundtrack {
 public:
     void setMusic(bool enabled, uint32_t now, SoundSink& sink);
@@ -23,7 +23,6 @@ private:
     bool music = false, effects = false;
     bool pending = false, pendingNamed = false, effectTail = false;
     bool effectNamed = false, hasEffectTime = false;
-    uint32_t lastStep = 0, lastEffect = 0;
-    uint8_t step = 0;
+    uint32_t lastEffect = 0;
 };
 } // namespace Visualization

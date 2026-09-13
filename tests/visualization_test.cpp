@@ -22,8 +22,8 @@ static void testSoundtrack() {
     Notes notes;Soundtrack track;
     track.notify(true);track.tick(1000,notes);assert(notes.played.empty());
     track.setMusic(true,1000,notes);track.tick(1000,notes);
-    assert(notes.played.size()==3);
-    track.tick(1001,notes);assert(notes.played.size()==3);
+    assert(notes.played.empty()); // Actual recording is streamed by the adapter.
+    track.tick(1001,notes);assert(notes.played.empty());
     const auto before=notes.played.size();
     track.tick(20000,notes);assert(notes.played.size()-before<=3); // No catch-up burst.
     track.silence(notes);assert(!track.musicEnabled()&&!track.effectsEnabled());
@@ -37,7 +37,7 @@ static void testSoundtrack() {
     track.tick(30750,notes);assert(notes.played.size()==3 && notes.played[2].hz==523);
     track.setEffects(false,notes);track.tick(31000,notes);assert(notes.played.size()==3);
     track.setMusic(true,UINT32_MAX-50,notes);notes.played.clear();
-    track.tick(UINT32_MAX-50,notes);track.tick(90,notes);assert(notes.played.size()>=4);
+    track.tick(UINT32_MAX-50,notes);track.tick(90,notes);assert(notes.played.empty());
 }
 static size_t count(const ObservationStore& store) {
     size_t n=0;for(const auto& e:store.snapshot())if(e.used)++n;return n;
@@ -83,20 +83,46 @@ int main(int argc,char** argv){
     store.observe(id,"WRAP",4,-60,UINT32_MAX-500);
     store.expire(200);assert(count(store)==1);
     store.expire(EXPIRE_MS);assert(count(store)==0);
-    for(int i=0;i<80;++i){id[0]=uint8_t(i);store.observe(id,"CROWD",5,-60,100+i);}
+    for(int i=0;i<200;++i){id[0]=uint8_t(i);store.observe(id,"CROWD",5,-60,100+i);}
     assert(count(store)==MAX_OBSERVATIONS);
-    bool latest=false;for(const auto& e:store.snapshot())if(e.identity[0]==79)latest=true;
+    bool latest=false;for(const auto& e:store.snapshot())if(e.identity[0]==199)latest=true;
     assert(latest);
-    assert(rendererFor(Mode::City) && !rendererFor(Mode::Radar) && !rendererFor(Mode::Rain));
+    assert(rendererFor(Mode::City) && rendererFor(Mode::Radar) && rendererFor(Mode::Rain));
+    for(int i=0;i<100;++i){id[0]=uint8_t(i);store.observe(id,nullptr,0,-30,500);}
+    for(const auto& e:store.snapshot())assert(e.named); // Anonymous traffic cannot evict names.
+    auto selected=selectPage(store.snapshot(),500,12,0);
+    assert(selected.count==12 && selected.named==96 && selected.pages==8);
+    bool visited[MAX_OBSERVATIONS]{};
+    for(unsigned page=0;page<8;++page){auto p=selectPage(store.snapshot(),500,12,page);
+        for(size_t i=0;i<p.count;++i){assert(!visited[p.indices[i]]);visited[p.indices[i]]=true;}}
+    id[0]=1;
+    const DeviceClassifier::Match flagged{DeviceClassifier::Platform::Flipper,DeviceClassifier::Evidence::Service};
+    store.observe(id,nullptr,0,-60,501,flagged);
+    selected=selectPage(store.snapshot(),501,12,0);
+    assert(selected.named==95 && DeviceClassifier::isFlagged(store.snapshot()[selected.indices[0]].classification));
+    assert(!store.snapshot()[selected.indices[0]].named);
+    store.observe(id,nullptr,0,-60,502);
+    assert(DeviceClassifier::isFlagged(store.snapshot()[selected.indices[0]].classification));
+    assert(selectPage(store.snapshot(),502,0,0).count==0);
+    assert(selectPage(store.snapshot(),502,999,999).count<=MAX_LABELS);
     Framebuffer frame;
     // Exercise every age/scroll phase, a full table, and uptime rollover.
-    for(uint32_t t=200;t<25000;t+=137)drawCity(frame,{store.snapshot(),t,nullptr});
+    for(auto mode:{Mode::City,Mode::Radar,Mode::Rain})
+        for(uint32_t t=500;t<25000;t+=137)rendererFor(mode)->draw(frame,{store.snapshot(),t,nullptr,t/6000});
     drawCity(frame,{store.snapshot(),UINT32_MAX,nullptr});
     store.clear();drawCity(frame,{store.snapshot(),3000,nullptr});
+    for(int i=0;i<20;++i){id[0]=uint8_t(i);store.observe(id,i<2?"NAMED":nullptr,i<2?5:0,-60,1000);}
+    for(int page=0;page<3;++page){const auto p=selectPage(store.snapshot(),1000,8,page);
+        assert(p.named==2 && p.pages==3 && store.snapshot()[p.indices[0]].named && store.snapshot()[p.indices[1]].named);}
+    store.clear();
     const char* names[]={"DECK-09","GHOST-7","NIGHT OWL","ANON-3F","PIXEL BUDS","NEON FOX"};
     for(int i=0;i<6;++i){id[0]=uint8_t(i);store.observe(id,names[i],std::strlen(names[i]),-43-i*7,1000);}
+    id[0]=10;store.observe(id,nullptr,0,-55,1000,flagged);
+    id[0]=11;store.observe(id,"ChameleonUltra",14,-60,1000,DeviceClassifier::classifyName("ChameleonUltra"));
     drawCity(frame,{store.snapshot(),3000,nullptr});
     if(argc>1)frame.save(argv[1]);
+    if(argc>2){drawRadar(frame,{store.snapshot(),3000,nullptr});frame.save(argv[2]);}
+    if(argc>3){drawRain(frame,{store.snapshot(),3000,nullptr});frame.save(argv[3]);}
     std::cout<<"PASS: observations, name resolution events, soundtrack timing/mute/rate limits, expiry/wrap and pixel bounds\n";
     std::cout<<"Framebuffer "<<sizeof(frame.pixels)<<" bytes; table "<<sizeof(ObservationStore)<<" bytes\n";
 }

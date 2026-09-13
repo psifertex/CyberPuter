@@ -105,7 +105,7 @@ static int         scrollOff_  = 0;      // first visible item index
 
 // ── Item table ────────────────────────────────────────────────
 // Built after init() because items reference state_ fields.
-static MenuItem items_[48];
+static MenuItem items_[56];
 static int      itemCount_ = 0;
 
 // Helper to play a tone if audio is enabled
@@ -248,7 +248,8 @@ static void buildItems() {
 
     section("CYBERPUTER");
     action("LABScon Neon City", []() { VisualizationView::open(); }, "V");
-    // TODO: Add Radar and Signal Rain when their renderer/budget checks pass.
+    action("LABScon Neon Radar", []() { VisualizationView::open(Visualization::Mode::Radar); }, "2");
+    action("LABScon Signal Rain", []() { VisualizationView::open(Visualization::Mode::Rain); }, "3");
 
     // ── HELP ─────────────────────────────────────────────────
     section("HELP");
@@ -466,12 +467,7 @@ void close() {
 
     menuSettings.save();
 
-    M5.Lcd.fillScreen(0x00C4);
-    drawOverlay(nibblesFront, NIBBLESFRONT_WIDTH, NIBBLESFRONT_HEIGHT, 5, 0);
-    drawOverlay(nibblesHappy, NIBBLESHAPPY_WIDTH, NIBBLESHAPPY_HEIGHT, 83, 60);
-    showFindingCounter(ScanContext::targetConnects, ScanContext::susDevice, ScanContext::allSpottedDevice);
-    showScanIcon();
-    drawXPBar(LEVEL_TEXT_X, BOTTOM_BAR_Y, true);
+    if (!VisualizationView::open()) open();
 }
 
 void closeSilent() {
