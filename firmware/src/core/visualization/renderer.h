@@ -20,6 +20,7 @@ struct Frame {
     const char* status; // Optional lifecycle/error/paused message in the footer.
     uint32_t page = 0; // Shared automatic/manual page cursor across modes.
     bool showFindings = true;
+    bool includeFindMy = false;
 };
 struct Renderer {
     Mode mode;

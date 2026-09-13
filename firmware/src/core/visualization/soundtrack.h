@@ -15,13 +15,15 @@ public:
     void setMusic(bool enabled, uint32_t now, SoundSink& sink);
     void setEffects(bool enabled, SoundSink& sink);
     void silence(SoundSink& sink);
-    void notify(bool suspicious);
+    void notify(bool suspicious, bool findMy = false);
+    void cancelFindMy() { pending &= ~uint8_t(2); }
     void tick(uint32_t now, SoundSink& sink);
     bool musicEnabled() const { return music; }
     bool effectsEnabled() const { return effects; }
 private:
     bool music = false, effects = false;
-    bool pending = false, hasEffectTime = false;
+    uint8_t pending = 0; // Other watchlist / optional Apple Find My.
+    bool hasEffectTime = false;
     uint32_t lastEffect = 0;
 };
 } // namespace Visualization

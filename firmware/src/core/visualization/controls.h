@@ -3,7 +3,7 @@
 namespace Visualization {
 enum class Action { None, City, Radar, Rain, Left, Right, Up, Down, AutoPage,
     Active, Pause, Music, NextTrack, Alerts, Mute, VolumeDown, VolumeUp,
-    Display, Stats, Help, Findings, Menu };
+    Display, Stats, Help, Findings, FindMy, Menu };
 struct Binding { char key; bool fn; Action action; const char* help; };
 // The dispatcher and both help entry points use this one binding table.
 inline constexpr Binding BINDINGS[]={
@@ -22,6 +22,7 @@ inline constexpr Binding BINDINGS[]={
     {'b',false,Action::Music,"B          MUSIC ON/OFF"},
     {'n',false,Action::NextTrack,"N          NEXT MUSIC TRACK"},
     {'f',false,Action::Alerts,"F          SUSPICIOUS ALERTS"},
+    {'g',false,Action::FindMy,"G          FIND MY FLAGS ON/OFF"},
     {'m',false,Action::Mute,"M / X      MUTE MUSIC + ALERTS"},
     {'x',false,Action::Mute,nullptr},
     {'-',false,Action::VolumeDown,"-          VOLUME DOWN"},

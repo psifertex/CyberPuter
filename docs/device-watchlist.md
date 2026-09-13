@@ -7,9 +7,12 @@ UUIDs and even complete payloads can be copied. A conference will contain many
 legitimate research tools. Do not use this costume firmware as an anti-stalking
 or surveillance-safety system.
 
-`DeviceClassifier` recognizes 13 platform/family entries. Nine are watchlist
-entries (research tools, tracker protocols and the narrowly matched Flock battery
-name); four are informational (Meshtastic, MeshCore, Tesla, Omi). The inferred
+`DeviceClassifier` recognizes 13 platform/family entries. Eight are watchlist
+entries by default (research tools, selected tracker protocols and the narrowly
+matched Flock battery name); five are informational (Apple Find My, Meshtastic,
+MeshCore, Tesla, Omi). G can opt Apple Find My into the costume watchlist,
+making nine highlighted entries. It starts off and does not affect Google Find
+Hub, Tile or SmartTag. The inferred
 platform label is separate from an actual advertised name. For an unnamed device,
 the views use `?PLATFORM`, without counting it as a discovered real name.
 
@@ -28,7 +31,7 @@ coverage of all firmware revisions.
 | Chameleon Ultra | Exact `ChameleonUltra` name | Research-tool watchlist. [Official device-name constants](https://github.com/RfidResearchGroup/ChameleonUltra/blob/main/firmware/common/device_info.h) and [advertising setup](https://github.com/RfidResearchGroup/ChameleonUltra/blob/main/firmware/application/src/ble_main.c). |
 | Chameleon Lite | Exact `ChameleonLite` name | Same sources as Ultra; name-only, not authenticated hardware identification. |
 | PwnBeacon | `b34c0000-0000-0000-1337-000000000001` service | Research-tool/peer-beacon watchlist. [Implementing project's constants](https://github.com/pfefferle/palnagotchi/blob/main/palnagotchi/pwnbeacon.h). This is the BLE peer protocol, not proof of Pwnagotchi hardware or Wi-Fi activity. |
-| Apple Find My format | Exactly 29 manufacturer bytes, including company `4c 00`, then type/length `12 19` | Tracker-format watchlist. [OpenHaystack researchers' implementing firmware](https://github.com/seemoo-lab/openhaystack/blob/main/Firmware/ESP32/main/openhaystack_main.c). Could be a tag, other compatible accessory, Apple device or an emulator; never label all matches “AirTag.” |
+| Apple Find My format | Exactly 29 manufacturer bytes, including company `4c 00`, then type/length `12 19` | Informational by default; G opts into tracker-format watchlist. [OpenHaystack researchers' implementing firmware](https://github.com/seemoo-lab/openhaystack/blob/main/Firmware/ESP32/main/openhaystack_main.c). Could be a tag, other compatible accessory, Apple device or an emulator; never label all matches “AirTag.” |
 | Google Find Hub format | Service-data UUID `FEAA`, frame `40`/`41`, and 21/22/33/34 payload bytes after UUID | Tracker-format watchlist. [Google specification, advertisement frames](https://developers.google.com/nearby/fast-pair/specifications/extensions/fmdn#advertising-frames). The lengths cover 20/32-byte ephemeral IDs and optional hashed flags. Compatible headphones can also emit these frames. Frame `41` does not independently prove a stalking incident. |
 | Tile family | Service `FEED` | Tracker-family watchlist. [Original protocol/security research](https://www.usenix.org/system/files/conference/usenixsecurity26/sec26_prepub_kumar.pdf) documents the advertisements used for discovery. Could be a Tile-enabled accessory, not necessarily a separate tag. |
 | Samsung SmartTag family | Service `FD59` or `FD5A` | Tracker-family watchlist. [Original SmartTag protocol research](https://www.usenix.org/system/files/usenixsecurity24-yu-tingfeng.pdf) documents unregistered/registered advertisements. Family match, not exact model or unwanted-tracking verdict. |

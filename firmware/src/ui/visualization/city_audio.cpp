@@ -232,7 +232,8 @@ void adjustVolume(int delta) {
     level=uint8_t(std::max(0,std::min(160,int(level)+delta)));
     if(acquired)M5.Speaker.setVolume(level);
 }
-void notify(bool suspicious) { track.notify(suspicious); }
+void notify(bool suspicious, bool findMy) { track.notify(suspicious,findMy); }
+void cancelFindMyAlert() { track.cancelFindMy(); }
 void update(uint32_t now,bool scannerReady) {
     if(!MenuController::getAudioEnabled()){mute();updateMusic();return;}
     if(!musicEnabled()&&!effectsEnabled()){release();updateMusic();return;}

@@ -29,7 +29,7 @@ struct Selection {
 // Whole, non-overlapping pages; priority never pins a row on subsequent pages.
 // Inferred platform labels never count as advertised names.
 Selection selectPage(const Snapshot& entries, uint32_t now, size_t capacity,
-                     uint32_t pageNumber);
+                     uint32_t pageNumber, bool includeFindMy = false);
 
 // Platform-independent and allocation-free. The adapter owns synchronization.
 class ObservationStore {
@@ -38,8 +38,10 @@ public:
                  size_t length, int rssi, uint32_t now, DeviceClassifier::Match classification = {});
     void expire(uint32_t now);
     const Snapshot& snapshot() const { return entries; }
-    void clear() { entries = {}; }
+    void clear() { entries = {}; includeFindMy = false; }
+    void setFindMyEnabled(bool enabled) { includeFindMy = enabled; }
 private:
     Snapshot entries{};
+    bool includeFindMy = false;
 };
 } // namespace Visualization

@@ -15,11 +15,11 @@ ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identit
     for (auto& entry : entries)
         if (entry.used && entry.identity == identity) { slot = &entry; break; }
     const bool incomingNamed = name && length && name[0];
-    const auto rank=[](bool named,DeviceClassifier::Match match){return DeviceClassifier::isFlagged(match)?2:named?1:0;};
+    const auto rank=[this](bool named,DeviceClassifier::Match match){return DeviceClassifier::isFlagged(match,includeFindMy)?2:named?1:0;};
     const int incomingRank=rank(incomingNamed,classification);
     const bool isNew = slot == nullptr;
     const bool previouslyNamed = slot && slot->named;
-    const bool previouslyFlagged = slot && DeviceClassifier::isFlagged(slot->classification);
+    const bool previouslyFlagged = slot && DeviceClassifier::isFlagged(slot->classification,includeFindMy);
     if (!slot) {
         for (auto& entry : entries) if (!entry.used) { slot = &entry; break; }
         // Full crowd: unknown traffic cannot evict a live named observation.
@@ -53,13 +53,13 @@ ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identit
     }
     slot->lastSeen = now;
     slot->classification=DeviceClassifier::strongerMatch(slot->classification,classification);
-    if(!previouslyFlagged && DeviceClassifier::isFlagged(slot->classification))return ObservationEvent::Flagged;
+    if(!previouslyFlagged && DeviceClassifier::isFlagged(slot->classification,includeFindMy))return ObservationEvent::Flagged;
     if (slot->named && !previouslyNamed) return ObservationEvent::NameResolved;
     return isNew ? ObservationEvent::Discovered : ObservationEvent::None;
 }
 
 Selection selectPage(const Snapshot& entries, uint32_t now, size_t capacity,
-                     uint32_t pageNumber) {
+                     uint32_t pageNumber, bool includeFindMy) {
     Selection result;
     capacity=std::min(capacity,MAX_LABELS);
     std::array<uint8_t,MAX_OBSERVATIONS> ordered{};
@@ -72,8 +72,8 @@ Selection selectPage(const Snapshot& entries, uint32_t now, size_t capacity,
     if(!capacity)return result;
     // Priority changes ordering, not page membership: no repeated/pinned rows.
     // Identity tie-breaks keep RSSI jitter and packet arrival order from shuffling.
-    const auto rank=[](const Observation& e){
-        return DeviceClassifier::isFlagged(e.classification)?2:e.named?1:0;
+    const auto rank=[includeFindMy](const Observation& e){
+        return DeviceClassifier::isFlagged(e.classification,includeFindMy)?2:e.named?1:0;
     };
     std::sort(ordered.begin(),ordered.begin()+result.total,[&](uint8_t a,uint8_t b){
         const int ar=rank(entries[a]),br=rank(entries[b]);

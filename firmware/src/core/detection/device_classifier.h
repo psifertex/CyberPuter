@@ -32,7 +32,9 @@ Match strongerMatch(Match a, Match b);
 Category category(Platform platform);
 const char* label(Platform platform);
 // A watchlist highlight means 'inspect this advertised capability', never 'attacker'.
-bool isFlagged(Platform platform);
-inline bool isFlagged(Match match) { return match.evidence != Evidence::None && isFlagged(match.platform); }
+bool isFlagged(Platform platform, bool includeFindMy = false);
+inline bool isFlagged(Match match, bool includeFindMy = false) {
+    return match.evidence != Evidence::None && isFlagged(match.platform, includeFindMy);
+}
 
 } // namespace DeviceClassifier

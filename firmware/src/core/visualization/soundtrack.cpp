@@ -13,8 +13,8 @@ void Soundtrack::setEffects(bool enabled, SoundSink& sink) {
 void Soundtrack::silence(SoundSink& sink) {
     setMusic(false,0,sink);setEffects(false,sink);
 }
-void Soundtrack::notify(bool suspicious) {
-    if(effects && suspicious)pending=true;
+void Soundtrack::notify(bool suspicious, bool findMy) {
+    if(effects && suspicious)pending|=findMy?2:1;
 }
 void Soundtrack::tick(uint32_t now, SoundSink& sink) {
     // Only newly flagged observations enter this path. Coalesce crowds and

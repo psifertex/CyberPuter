@@ -21,6 +21,7 @@ and slash (right). Esc here means the backtick key.
 | B | Toggle SD music (on by default) |
 | N | Next music track; also selects while music is off |
 | F | Toggle suspicious-device alerts (on by default) |
+| G | Toggle Apple Find My watchlist highlighting/alerts (off by default) |
 | M or X | Mute music and alerts; B/F enable them again |
 | - | Volume down 16, minimum 0 |
 | = or + | Volume up 16, maximum 160 |
@@ -39,6 +40,14 @@ page one. Entering from the menu starts both audio options enabled again; the
 saved master Audio setting and alarm-volume-derived initial volume still apply.
 F on will alert for a currently visible flagged device, useful for testing with
 your Flipper. Repeated advertisements do not continuously sound the alarm.
+
+G affects Apple Find My only, not Google Find Hub, Tile or SmartTag. Off keeps
+Find My observations visible but informational, with ordinary retention/page
+priority and no new alert. On promotes them to watchlist entries and can alert
+once for an already visible Find My device if F is enabled. Turning G off cancels
+pending Find My alerts; an already playing sample finishes normally. G survives
+number-key view switches, resets off on entry from the menu, and returns paging
+to the first page when changed. Names/classification are not discarded.
 
 Other characters, Enter, Tab and standalone Fn have no visualization action.
 There is no previous-track, screenshot, or dedicated test-sound binding.

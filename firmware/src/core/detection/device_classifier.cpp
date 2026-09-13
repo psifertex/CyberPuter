@@ -104,7 +104,8 @@ Category category(Platform platform) {
     }
 }
 
-bool isFlagged(Platform platform) {
+bool isFlagged(Platform platform, bool includeFindMy) {
+    if(platform == Platform::AppleFindMy)return includeFindMy;
     const Category c = category(platform);
     return c == Category::ResearchTool || c == Category::Tracker ||
            c == Category::Surveillance;

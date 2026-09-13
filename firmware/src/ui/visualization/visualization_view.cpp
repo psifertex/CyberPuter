@@ -21,10 +21,13 @@ using namespace Visualization;
 std::atomic<bool> opened{false}, closing{false}, stopped{false}, ready{false};
 std::atomic<bool> paused{false}, scanFailed{false};
 std::atomic<bool> activeNames{false}, activeApplied{false};
-std::atomic<uint8_t> soundEvents{0}; // Newly flagged observations only.
+std::atomic<uint8_t> soundEvents{0}; // Bit 0 other flags; bit 1 optional Find My.
 bool restoreScan = false, displayOn = true, stats = false;
 bool showHelp=false;
 bool showFindings=true, helpReturnToMenu=false;
+bool includeFindMy=false;
+uint32_t findMyNoticeAt=0;
+bool findMyNotice=false;
 size_t helpScroll=0;
 uint32_t audioNoticeAt=0;
 bool audioNotice=false;
@@ -72,7 +75,7 @@ class ObservationCallbacks final : public NimBLEScanCallbacks {
         portENTER_CRITICAL(&storeMux);
         const auto event=store.observe(identity,name.data(),name.size(),device->getRSSI(),now,match);
         portEXIT_CRITICAL(&storeMux);
-        if(event==ObservationEvent::Flagged)soundEvents.store(1);
+        if(event==ObservationEvent::Flagged)soundEvents.fetch_or(match.platform==Platform::AppleFindMy?2:1);
     }
 } observationCallbacks;
 } // namespace
@@ -113,6 +116,7 @@ static bool openImpl(Visualization::Mode mode,bool menuHelp) {
     closing=false;stopped=false;ready=false;paused=menuHelp;scanFailed=false;
     activeNames=false;activeApplied=false;soundEvents=0;showHelp=menuHelp;
     helpReturnToMenu=menuHelp;helpScroll=0;showFindings=true;
+    includeFindMy=false;findMyNotice=false;
     if(!menuHelp)CityAudio::begin();
     stats=false;lastFrame=0;framePeriod=50;
     displayOn=true;NetworkContext::displayEnabled=true;M5.Lcd.wakeup();
@@ -198,8 +202,8 @@ void handleKey(char key) {
         CityAudio::toggleEffects();
         // Enabling alerts can be tested with an already visible Flipper.
         if(CityAudio::effectsEnabled())for(const auto& e:snapshot)
-            if(e.used && uint32_t(millis()-e.lastSeen)<EXPIRE_MS && DeviceClassifier::isFlagged(e.classification)){
-                CityAudio::notify(true);break;
+            if(e.used && uint32_t(millis()-e.lastSeen)<EXPIRE_MS && DeviceClassifier::isFlagged(e.classification,includeFindMy)){
+                CityAudio::notify(true,e.classification.platform==DeviceClassifier::Platform::AppleFindMy);
             }
     }
     if(action==Action::Mute)CityAudio::mute();
@@ -208,6 +212,18 @@ void handleKey(char key) {
     if(action==Action::Help)openHelp();
     if(action==Action::Stats)stats=!stats;
     if(action==Action::Findings)showFindings=!showFindings;
+    if(action==Action::FindMy){
+        includeFindMy=!includeFindMy;
+        portENTER_CRITICAL(&storeMux);store.setFindMyEnabled(includeFindMy);portEXIT_CRITICAL(&storeMux);
+        page=0;pageAt=millis();findMyNotice=true;findMyNoticeAt=millis();
+        if(!includeFindMy){
+            soundEvents.fetch_and(uint8_t(~2));CityAudio::cancelFindMyAlert();
+        }else for(const auto& e:snapshot){
+            if(e.used && uint32_t(millis()-e.lastSeen)<EXPIRE_MS && e.classification.platform==DeviceClassifier::Platform::AppleFindMy){
+                CityAudio::notify(true,true);break;
+            }
+        }
+    }
     if(action==Action::Display){
         displayOn=!displayOn;
         NetworkContext::displayEnabled=displayOn;
@@ -232,7 +248,8 @@ void update() {
     if(autoPage && !showHelp && uint32_t(now-pageAt)>=6000){++page;pageAt=now;}
     // Audio timing remains independent of redraw cadence and display sleep.
     const uint8_t events=soundEvents.exchange(0);
-    if(events)CityAudio::notify(true);
+    if(events&1)CityAudio::notify(true);
+    if((events&2) && includeFindMy)CityAudio::notify(true,true);
     if(!closing.load() && !helpReturnToMenu)CityAudio::update(now,ready.load());
     if(!displayOn || uint32_t(now-lastFrame)<framePeriod)return;
     lastFrame=now;
@@ -249,6 +266,8 @@ void update() {
     }
     else if(paused.load())status="SCAN PAUSED / P TO RESUME";
     else if(activeNames.load()!=activeApplied.load())status="NAME MODE CHANGES NEXT SCAN";
+    else if(findMyNotice && uint32_t(now-findMyNoticeAt)<3000)
+        status=includeFindMy?"G FIND MY FLAGS ON":"G FIND MY INFORMATIONAL ONLY";
     else if(CityAudio::effectsEnabled() && std::strcmp(CityAudio::alertStatus(),"ALERT READY")!=0)
         status=CityAudio::alertStatus();
     else if(audioNotice && uint32_t(now-audioNoticeAt)<6000)
@@ -256,15 +275,15 @@ void update() {
     else if(CityAudio::musicEnabled() && std::strcmp(CityAudio::musicStatus(),"PLAYING SD")!=0)
         status=CityAudio::musicStatus();
     else {
-        std::snprintf(metrics,sizeof(metrics),"A %s B %s F %s V%03u %s",
+        std::snprintf(metrics,sizeof(metrics),"A %s B %s F %s G %s V%03u %s",
             activeApplied.load()?"ACT":"PAS",CityAudio::musicEnabled()?"ON":"OFF",
-            CityAudio::effectsEnabled()?"ON":"OFF",unsigned(CityAudio::volume()),
-            MenuController::getAudioEnabled()?"H HELP":"MASTER MUTE");
+            CityAudio::effectsEnabled()?"ON":"OFF",includeFindMy?"ON":"OFF",unsigned(CityAudio::volume()),
+            MenuController::getAudioEnabled()?"H":"MUTE");
         status=metrics;
     }
     const uint32_t start=micros();
     if(showHelp && !closing.load())drawHelp(surface,helpScroll);
-    else renderer->draw(surface,{snapshot,now,status,page,showFindings});
+    else renderer->draw(surface,{snapshot,now,status,page,showFindings,includeFindMy});
     {
         UIContext::DisplayGuard displayGuard(true);
         if (!displayGuard) return;

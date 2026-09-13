@@ -75,7 +75,7 @@ void drawCity(Surface& s, const Frame& frame) {
     s.fill(0,0,WIDTH,HEIGHT,Background);
     text(s,"GHOST CITY",5,4,Violet);
     size_t count=0;for(const auto& e:frame.observations)if(frame.showFindings && e.used && uint32_t(t-e.lastSeen)<EXPIRE_MS)++count;
-    const auto selection=selectPage(frame.observations,t,count>6?12:6,frame.page);
+    const auto selection=selectPage(frame.observations,t,count>6?12:6,frame.page,frame.includeFindMy);
     char buffer[40];
     if(frame.showFindings){std::snprintf(buffer,sizeof(buffer),"N%u U%u %u/%u",unsigned(selection.named),unsigned(count-selection.named),unsigned(selection.page+1),unsigned(selection.pages));text(s,buffer,112,4,Cyan);}
     s.fill(4,15,232,1,Grid);
@@ -103,7 +103,7 @@ void drawCity(Surface& s, const Frame& frame) {
         const int y=count>6?48+int(visible/3)*16:signs[visible][1];
         const int maxChars=count>6?11:signs[visible][2];
         char derived[NAME_BYTES+2];const char* source=displayName(e,derived);
-        const bool flagged=DeviceClassifier::isFlagged(e.classification);
+        const bool flagged=DeviceClassifier::isFlagged(e.classification,frame.includeFindMy);
         const size_t length=std::strlen(source),shown=std::min(length,size_t(maxChars-(flagged?1:0)));
         // Scroll long names inside the sign rather than drawing into its neighbour.
         const size_t scroll=length>shown?(t/400)%(length-shown+4):0;
@@ -136,8 +136,8 @@ static void viewHeader(Surface& s,const char* title,const Selection& p,bool find
 static void viewFooter(Surface& s,const Frame& f) {
     s.fill(0,122,240,13,Sign);text(s,f.status?f.status:"1 CITY 2 RADAR 3 RAIN",4,125,Amber);
 }
-static void label(Surface& s,const Observation& e,int x,int y,size_t width,uint32_t now,uint8_t color) {
-    const bool flagged=DeviceClassifier::isFlagged(e.classification);
+static void label(Surface& s,const Observation& e,int x,int y,size_t width,uint32_t now,uint8_t color,bool includeFindMy) {
+    const bool flagged=DeviceClassifier::isFlagged(e.classification,includeFindMy);
     if(flagged){text(s,"!",x,y,(now/700)%2?VioletDim:Amber);x+=6;--width;color=Amber;}
     char derived[NAME_BYTES+2];const char* source=displayName(e,derived);
     char b[NAME_BYTES+2];const size_t len=std::strlen(source),n=std::min(len,width);
@@ -146,7 +146,7 @@ static void label(Surface& s,const Observation& e,int x,int y,size_t width,uint3
 }
 void drawRadar(Surface& s,const Frame& f) {
     s.fill(0,0,WIDTH,HEIGHT,Background);
-    const auto p=selectPage(f.observations,f.now,8,f.page);viewHeader(s,"LABScon RADAR",p,f.showFindings);
+    const auto p=selectPage(f.observations,f.now,8,f.page,f.includeFindMy);viewHeader(s,"LABScon RADAR",p,f.showFindings);
     for(int r=15;r<=45;r+=15)circle(s,54,67,r,Grid);
     s.fill(9,67,91,1,Grid);s.fill(54,22,1,91,Grid);
     const float angle=(f.now%6000)*6.2831853f/6000;
@@ -156,18 +156,18 @@ void drawRadar(Surface& s,const Frame& f) {
         uint32_t hash=2166136261u;for(auto b:e.identity)hash=(hash^b)*16777619u;
         const float a=(hash%360)*0.017453293f;const int r=std::clamp((-int(e.rssi)-25)/2,5,44);
         const int x=54+int(std::cos(a)*r),y=67+int(std::sin(a)*r);
-        const bool flagged=DeviceClassifier::isFlagged(e.classification);
+        const bool flagged=DeviceClassifier::isFlagged(e.classification,f.includeFindMy);
         pixel(s,x,y,flagged?Amber:e.named?Cyan:VioletDim);
         if(flagged)circle(s,x,y,(f.now/700)%2?3:2,Amber);
         else if(e.named)circle(s,x,y,2,Cyan);
     }
     text(s,"ART NOT BEARING",9,114,VioletDim);
-    for(size_t i=0;f.showFindings && i<p.count;++i)label(s,f.observations[p.indices[i]],112,23+int(i)*12,21,f.now,i%2?Pink:Cyan);
+    for(size_t i=0;f.showFindings && i<p.count;++i)label(s,f.observations[p.indices[i]],112,23+int(i)*12,21,f.now,i%2?Pink:Cyan,f.includeFindMy);
     viewFooter(s,f);
 }
 void drawRain(Surface& s,const Frame& f) {
     s.fill(0,0,WIDTH,HEIGHT,Background);
-    const auto p=selectPage(f.observations,f.now,12,f.page);
+    const auto p=selectPage(f.observations,f.now,12,f.page,f.includeFindMy);
     for(size_t i=0;i<(f.showFindings?p.count:12);++i){
         const char* glyphs=f.showFindings?f.observations[p.indices[i]].name:"0123456789ABCDEF";
         const size_t len=std::strlen(glyphs);
@@ -177,7 +177,7 @@ void drawRain(Surface& s,const Frame& f) {
     s.fill(0,0,240,17,Background);viewHeader(s,"SIGNAL RAIN",p,f.showFindings);
     s.fill(83,22,74,15,Sign);box(s,83,22,74,15,Pink);text(s,"LABScon",99,26,White);
     for(size_t i=0;f.showFindings && i<p.count;++i){int x=3+int(i%2)*120,y=44+int(i/2)*12;
-        s.fill(x,y-1,115,10,Sign);label(s,f.observations[p.indices[i]],x+2,y,18,f.now,i%2?Pink:Cyan);}
+        s.fill(x,y-1,115,10,Sign);label(s,f.observations[p.indices[i]],x+2,y,18,f.now,i%2?Pink:Cyan,f.includeFindMy);}
     viewFooter(s,f);
 }
 void drawHelp(Surface& s,size_t scroll) {

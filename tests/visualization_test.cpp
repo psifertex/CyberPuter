@@ -36,6 +36,10 @@ static void testSoundtrack() {
     track.setEffects(true,notes);track.notify(true);track.tick(UINT32_MAX-50,notes);
     assert(notes.played==3);track.notify(true);track.tick(90,notes);assert(notes.played==3);
     track.tick(5000,notes);assert(notes.played==4); // Cooldown survives uptime wrap.
+    track.setEffects(true,notes);track.notify(true,true);track.cancelFindMy();
+    track.tick(10000,notes);assert(notes.played==4); // G off cancels a pending Apple alert.
+    track.notify(true,true);track.notify(true,false);track.cancelFindMy();
+    track.tick(10001,notes);assert(notes.played==5); // Other pending flags survive.
 }
 static size_t count(const ObservationStore& store) {
     size_t n=0;for(const auto& e:store.snapshot())if(e.used)++n;return n;
@@ -63,6 +67,7 @@ int main(int argc,char** argv){
     assert(actionFor('s')==Action::Stats && actionFor('S')==Action::Stats);
     assert(actionFor('m')==Action::Mute && actionFor('x')==Action::Mute);
     assert(actionFor('t')==Action::Findings && actionFor('h')==Action::Help);
+    assert(actionFor('g')==Action::FindMy && actionFor('G')==Action::FindMy);
     assert(actionFor(',')==Action::Left && actionFor('/')==Action::Right);
     assert(actionFor(';')==Action::Up && actionFor('.')==Action::Down);
     assert(actionFor('q')==Action::Menu && actionFor('`')==Action::Menu);
@@ -114,6 +119,37 @@ int main(int argc,char** argv){
     assert(selectPage(store.snapshot(),502,0,0).count==0);
     assert(selectPage(store.snapshot(),502,999,999).count<=MAX_LABELS);
     Framebuffer frame;
+    {
+        ObservationStore policy;
+        const DeviceClassifier::Match apple{DeviceClassifier::Platform::AppleFindMy,DeviceClassifier::Evidence::Payload};
+        auto appleId=id;appleId[0]=0;
+        assert(policy.observe(appleId,nullptr,0,-60,1000,apple)==ObservationEvent::Discovered);
+        auto namedId=id;namedId[0]=1;policy.observe(namedId,"NAMED",5,-60,1000);
+        auto off=selectPage(policy.snapshot(),1000,12,0);
+        assert(policy.snapshot()[off.indices[0]].named);
+        auto on=selectPage(policy.snapshot(),1000,12,0,true);
+        assert(policy.snapshot()[on.indices[0]].classification.platform==DeviceClassifier::Platform::AppleFindMy);
+        for(auto mode:{Mode::City,Mode::Radar,Mode::Rain}){
+            Framebuffer enabled;
+            rendererFor(mode)->draw(frame,{policy.snapshot(),1100,nullptr,0,true,false});
+            rendererFor(mode)->draw(enabled,{policy.snapshot(),1100,nullptr,0,true,true});
+            assert(std::memcmp(frame.pixels,enabled.pixels,FRAME_BYTES)!=0);
+        }
+        policy.setFindMyEnabled(true);appleId[0]=2;
+        assert(policy.observe(appleId,nullptr,0,-60,1100,apple)==ObservationEvent::Flagged);
+        assert(policy.observe(appleId,nullptr,0,-60,1101,apple)==ObservationEvent::None);
+        policy.setFindMyEnabled(false);appleId[0]=3;
+        assert(policy.observe(appleId,nullptr,0,-60,1102,apple)==ObservationEvent::Discovered);
+        policy.setFindMyEnabled(true);policy.clear();
+        assert(policy.observe(appleId,nullptr,0,-60,1103,apple)==ObservationEvent::Discovered);
+        // Default-off Find My floods cannot evict names from a full table.
+        policy.clear();
+        for(size_t i=0;i<MAX_OBSERVATIONS;++i){namedId[0]=uint8_t(i);policy.observe(namedId,"NAMED",5,-60,1200);}
+        appleId[0]=200;
+        assert(policy.observe(appleId,nullptr,0,-60,1201,apple)==ObservationEvent::None);
+        policy.setFindMyEnabled(true);
+        assert(policy.observe(appleId,nullptr,0,-60,1202,apple)==ObservationEvent::Flagged);
+    }
     for(size_t i=0;i<helpLineCount()+10;++i)drawHelp(frame,i);
     drawHelp(frame,SIZE_MAX);
     Snapshot empty{};Framebuffer background;

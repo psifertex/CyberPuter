@@ -36,6 +36,11 @@ F on also alerts for a flagged device already visible. Classification is heurist
 not proof of malicious activity. Music and alerts begin enabled on entry, but
 the saved master Audio mute still takes precedence.
 
+Apple Find My-format matches are excluded by default. G opts them into the
+watchlist, with F still required for sound. Turning G off removes pending Find My
+events without dropping other pending watchlist alerts. A sample already playing
+is allowed to finish normally. Find My remains visible as informational data.
+
 The bundled alert is normalized to approximately -3 dBFS peak. During playback,
 music channel gain drops by about 21 dB, then returns to its prior setting when
 the alert channel becomes idle (including after an asynchronous F-off stop).

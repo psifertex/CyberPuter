@@ -14,6 +14,7 @@ the audio playback session.
 | T | Hide/show findings; scanning and audio continue |
 | B / N | Toggle music / next SD track |
 | F / M or X | Toggle suspicious-device alerts / mute music and alerts |
+| G | Opt Apple Find My into watchlist flags/alerts; off by default |
 | - / = | Lower / raise volume |
 | H / S | Full-screen scrollable help / rendering time and free heap |
 | Semicolon / period | Scroll help up / down, no Fn |
@@ -67,6 +68,12 @@ exclamation marker and slowly pulsing borders/markers identify flagged matches.
 Ordinary new discoveries do not blink, and weak RSSI no longer uses amber.
 Inferred platform labels start with a question mark and are not counted as
 advertised names. Mesh/vehicle/wearable recognition is informational.
+
+Apple Find My is also informational by default: still listed, but no amber
+highlight, pulse, alert or protected watchlist priority. G opts it in for the
+current visualization session and F remains the global alert control. Switching
+G resets paging to page one, without clearing observations. Google Find Hub,
+Tile and SmartTag are separate protocols and keep their current behavior.
 
 ## Sound
 

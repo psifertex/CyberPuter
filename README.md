@@ -24,6 +24,10 @@ scroll it, without Fn. The menu Help item uses the same page. Audio starts
 on and respects GhostBLE's master Audio setting. Active scans do not pair or
 connect; some devices still will not supply names.
 
+**G** opts Apple Find My into watchlist alerts/highlighting; it starts **off**.
+Find My-format devices remain visible as informational entries, without amber
+pulses or privileged retention. Google Find Hub, Tile and SmartTag are unchanged.
+
 ![Actual C++ city renderer with synthetic observations](preview/city-firmware-240x135.png)
 ![Actual C++ radar renderer with synthetic observations](preview/radar-firmware-240x135.png)
 ![Actual C++ rain renderer with synthetic observations](preview/rain-firmware-240x135.png)

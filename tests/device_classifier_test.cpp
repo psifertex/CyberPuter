@@ -77,7 +77,11 @@ int main() {
     assert(!isFlagged(Platform::Tesla));
     assert(!isFlagged(Platform::Omi));
     assert(isFlagged(Platform::Flipper));
-    assert(isFlagged(Platform::AppleFindMy));
+    assert(!isFlagged(Platform::AppleFindMy));
+    assert(isFlagged(Platform::AppleFindMy,true));
+    assert(!isFlagged(payload) && isFlagged(payload,true));
+    assert(isFlagged(Platform::GoogleFindHub)); // G is Apple-specific.
+    assert(isFlagged(Platform::Tile) && isFlagged(Platform::SamsungSmartTag));
     assert(!isFlagged(Match{}));
     return 0;
 }
