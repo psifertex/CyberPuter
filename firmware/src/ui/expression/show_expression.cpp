@@ -10,6 +10,7 @@
 #include "ui/overlay/draw_overlay.h"
 #include "ui/icons/scan_icon.h"
 #include "ui/menu/menu_controller.h"
+#include "ui/visualization/visualization_view.h"
 #include "ui/susview/sus_device_view.h"
 #include "infrastructure/gps/gps_manager.h"
 #include "web/web_sender.h"
@@ -289,50 +290,8 @@ void clearSpeechBubble() {
 //  Help overlay — reads/writes UIContext::helpOverlayVisible
 // ----------------------------------------------------------------
 void showHelpOverlay() {
-    UIContext::DisplayGuard displayGuard;
-    if (!displayGuard) return;
-    if (MenuController::isOpen() || SusDeviceView::isOpen() || FinderListView::isOpen() || ApproachView::isOpen() || FileManagerView::isOpen() || ConnectedDeviceView::isOpen()) return;
-    UIContext::helpOverlayVisible = true;
-
-    int y            = 18;
-    const int lineH  = 11;
-
-    M5.Lcd.fillScreen(0x00C4);
-    M5.Lcd.setTextSize(1);
-
-    M5.Lcd.setTextColor(GREEN, 0x00C4);
-    M5.Lcd.setCursor(80, 3);
-    M5.Lcd.print("-- CONTROLS --");
-
-    // Build Date
-    M5.Lcd.setTextColor(0x8C71, 0x00C4);
-    M5.Lcd.setCursor(10, y); y += 15;
-    M5.Lcd.print("Build Date   ");
-    M5.Lcd.print(GHOSTBLE_BUILD_DATE);
-
-    M5.Lcd.setTextColor(WHITE, 0x00C4);
-
-#if HAS_KEYBOARD
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Hold BtnG0   BLE Scan"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn D        Display sleep"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn FN       WiFi On/Off"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn F        BLE Device Finder"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn M/Q      Main/Quick Menu"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn P        Pointer in log"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn R        Research Mode"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Btn S        Scan Mode"); y += lineH;
-#endif
-
-#if HAS_TWO_BUTTONS
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("BtnA       Next / +"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Hold BtnA  BLE Scan"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("BtnB       Select"); y += lineH;
-    M5.Lcd.setCursor(10, y); M5.Lcd.print("Hold BtnB  Open/Back/Close"); y += lineH;
-#endif
-
-    M5.Lcd.setTextColor(0x7BEF, 0x00C4);
-    M5.Lcd.setCursor(40, SCREEN_H - 12);
-    M5.Lcd.print("press any key to close");
+    // Compatibility entry point: never show stale upstream mascot shortcuts.
+    VisualizationView::openHelp();
 }
 
 void dismissHelpOverlay() {

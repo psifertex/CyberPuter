@@ -1,6 +1,7 @@
 #include "core/visualization/observations.h"
 #include "core/visualization/renderer.h"
 #include "core/visualization/soundtrack.h"
+#include "core/visualization/controls.h"
 #include <cassert>
 #include <cstring>
 #include <fstream>
@@ -58,6 +59,15 @@ struct Framebuffer final : Surface {
 };
 int main(int argc,char** argv){
     testSoundtrack();
+    assert(actionFor('p')==Action::Pause && actionFor('P')==Action::Pause);
+    assert(actionFor('s')==Action::Stats && actionFor('S')==Action::Stats);
+    assert(actionFor('m')==Action::Mute && actionFor('x')==Action::Mute);
+    assert(actionFor('t')==Action::Findings && actionFor('h')==Action::Help);
+    assert(actionFor(',')==Action::Left && actionFor('/')==Action::Right);
+    assert(actionFor(';')==Action::Up && actionFor('.')==Action::Down);
+    assert(actionFor('q')==Action::Menu && actionFor('`')==Action::Menu);
+    for(const auto& b:BINDINGS)assert(actionFor(b.key,b.fn)==b.action);
+    for(size_t i=0;i<helpLineCount();++i)assert(std::strlen(helpLine(i))<=38);
     ObservationStore store;
     std::array<uint8_t,7> id{0x12,0x34,0,0,0,0,1};
     store.observe(id,"FIRST",5,-80,100);
@@ -104,6 +114,14 @@ int main(int argc,char** argv){
     assert(selectPage(store.snapshot(),502,0,0).count==0);
     assert(selectPage(store.snapshot(),502,999,999).count<=MAX_LABELS);
     Framebuffer frame;
+    for(size_t i=0;i<helpLineCount()+10;++i)drawHelp(frame,i);
+    drawHelp(frame,SIZE_MAX);
+    Snapshot empty{};Framebuffer background;
+    for(auto mode:{Mode::City,Mode::Radar,Mode::Rain}){
+        rendererFor(mode)->draw(frame,{store.snapshot(),1000,nullptr,5,false});
+        rendererFor(mode)->draw(background,{empty,1000,nullptr,0,false});
+        assert(std::memcmp(frame.pixels,background.pixels,FRAME_BYTES)==0);
+    }
     // Exercise every age/scroll phase, a full table, and uptime rollover.
     for(auto mode:{Mode::City,Mode::Radar,Mode::Rain})
         for(uint32_t t=500;t<25000;t+=137)rendererFor(mode)->draw(frame,{store.snapshot(),t,nullptr,t/6000});
@@ -121,6 +139,7 @@ int main(int argc,char** argv){
     if(argc>1)frame.save(argv[1]);
     if(argc>2){drawRadar(frame,{store.snapshot(),3000,nullptr});frame.save(argv[2]);}
     if(argc>3){drawRain(frame,{store.snapshot(),3000,nullptr});frame.save(argv[3]);}
+    if(argc>4){drawHelp(frame,7);frame.save(argv[4]);}
     std::cout<<"PASS: observations, flag transitions, suspicious-only alerts/cooldown/mute, expiry/wrap and pixel bounds\n";
     std::cout<<"Framebuffer "<<sizeof(frame.pixels)<<" bytes; table "<<sizeof(ObservationStore)<<" bytes\n";
 }

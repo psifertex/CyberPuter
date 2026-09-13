@@ -19,6 +19,7 @@ struct Frame {
     uint32_t now;
     const char* status; // Optional lifecycle/error/paused message in the footer.
     uint32_t page = 0; // Shared automatic/manual page cursor across modes.
+    bool showFindings = true;
 };
 struct Renderer {
     Mode mode;
@@ -30,4 +31,5 @@ const Renderer* rendererFor(Mode mode);
 void drawCity(Surface& surface, const Frame& frame);
 void drawRadar(Surface& surface, const Frame& frame);
 void drawRain(Surface& surface, const Frame& frame);
+void drawHelp(Surface& surface, size_t scroll);
 } // namespace Visualization

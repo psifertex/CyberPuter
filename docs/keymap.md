@@ -16,17 +16,23 @@ and slash (right). Esc here means the backtick key.
 | Slash | Next device page; stop automatic paging |
 | 0 | Resume six-second automatic paging |
 | A | Toggle active BLE name scanning (passive by default) |
-| S | Pause/resume scanning |
+| P | Pause/resume scanning |
+| T | Hide/show findings without stopping scanning/audio |
 | B | Toggle SD music (on by default) |
 | N | Next music track; also selects while music is off |
 | F | Toggle suspicious-device alerts (on by default) |
-| X | Mute music and alerts; B/F enable them again |
+| M or X | Mute music and alerts; B/F enable them again |
 | - | Volume down 16, minimum 0 |
 | = or + | Volume up 16, maximum 160 |
 | D | Sleep/wake display; audio/scanning continue |
-| P | Toggle frame-time/free-heap display |
-| H | Toggle cycling footer key reference |
-| Backtick/Esc, M, Q | Leave visualization and open menu |
+| S | Toggle frame-time/free-heap display |
+| H | Open/close full-screen help |
+| Backtick/Esc, Q | Leave visualization and open menu; close help first |
+
+In help, semicolon/period scroll one line and comma/slash scroll one page. No Fn
+required. H, backtick/Esc or Q closes help; M/X still mutes audio. Other shortcuts
+are inactive while reading help. The menu Show Help item opens the same page and
+returns to the menu on close, without starting music/scanning.
 
 Switching views preserves audio/scanning settings and resets paging to automatic
 page one. Entering from the menu starts both audio options enabled again; the
@@ -50,8 +56,19 @@ There is no previous-track, screenshot, or dedicated test-sound binding.
 | Lists | Backtick/Esc | Go back; cancel a file-delete prompt first |
 | Finder | F | Refresh device list |
 | Approach view | Backtick/Esc | Go back; other keyboard inputs do nothing |
-| Legacy help overlay | Any key | Dismiss help |
+| Help page, including menu Help | Semicolon / period | Scroll up / down |
+| Help page | Comma / slash | Scroll previous / next page |
+| Help page | H, backtick/Esc, Q | Close help |
+| Help page | M / X | Mute audio |
 
 M/Q and the visualization number shortcuts are not menu navigation shortcuts.
-Old mascot-home shortcuts still present in upstream source are no longer reachable
-as a home screen and are not part of this map.
+Old mascot-home shortcuts are no longer reachable as a home screen. The old help
+entry point now forwards to the new help page rather than listing those shortcuts.
+
+## Research Mode setting
+
+This inherited setting controls active BLE scanning in the legacy scanner
+(`ble_scanner.cpp`). It also changes the legacy research icon/mascot dialogue.
+Wardriving enables it automatically. It does not control the costume scanner:
+use A in city/radar/rain for active scan requests, without pairing or GATT
+connections. Research Mode is not a special mode for revealing encrypted names.

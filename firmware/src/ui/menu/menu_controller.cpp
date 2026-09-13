@@ -254,8 +254,7 @@ static void buildItems() {
     // ── HELP ─────────────────────────────────────────────────
     section("HELP");
     action("Show Help", []() {
-        MenuController::closeSilent();
-        showHelpOverlay();
+        VisualizationView::openHelp();
     });
 
     // ── File Manager ──────-──────────────────────────────────

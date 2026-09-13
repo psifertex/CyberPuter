@@ -1,5 +1,6 @@
 #include "visualization_view.h"
 #include "city_audio.h"
+#include "core/visualization/controls.h"
 #include "app/context/ui_context.h"
 #include "app/context/scan_context.h"
 #include "app/context/network_context.h"
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 
 namespace VisualizationView {
 namespace {
@@ -22,6 +24,8 @@ std::atomic<bool> activeNames{false}, activeApplied{false};
 std::atomic<uint8_t> soundEvents{0}; // Newly flagged observations only.
 bool restoreScan = false, displayOn = true, stats = false;
 bool showHelp=false;
+bool showFindings=true, helpReturnToMenu=false;
+size_t helpScroll=0;
 uint32_t audioNoticeAt=0;
 bool audioNotice=false;
 bool configured = false; // ScanTask only.
@@ -81,7 +85,7 @@ bool setMode(Visualization::Mode mode) {
     page=0;pageAt=millis();autoPage=true;
     return true;
 }
-bool open(Visualization::Mode mode) {
+static bool openImpl(Visualization::Mode mode,bool menuHelp) {
     if (isOpen()) return setMode(mode);
     if (!setMode(mode)) return false;
     UIContext::DisplayGuard displayGuard(true);
@@ -106,15 +110,25 @@ bool open(Visualization::Mode mode) {
     snapshot={};
     restoreScan=ScanContext::bleScanEnabled.exchange(false);
     ScanContext::scanCancelRequested.store(true);
-    closing=false;stopped=false;ready=false;paused=false;scanFailed=false;
-    activeNames=false;activeApplied=false;soundEvents=0;showHelp=false;
-    CityAudio::begin();
+    closing=false;stopped=false;ready=false;paused=menuHelp;scanFailed=false;
+    activeNames=false;activeApplied=false;soundEvents=0;showHelp=menuHelp;
+    helpReturnToMenu=menuHelp;helpScroll=0;showFindings=true;
+    if(!menuHelp)CityAudio::begin();
     stats=false;lastFrame=0;framePeriod=50;
     displayOn=true;NetworkContext::displayEnabled=true;M5.Lcd.wakeup();
     UIContext::visualizationActive=true;
     MenuController::closeSilent();
     opened=true; // Publish fully initialized state to ScanTask last.
     return true;
+}
+bool open(Visualization::Mode mode) { return openImpl(mode,false); }
+bool openHelp() {
+    if(isOpen()){
+        showHelp=true;helpScroll=0;
+        displayOn=true;NetworkContext::displayEnabled=true;M5.Lcd.wakeup();
+        return true;
+    }
+    return openImpl(Visualization::Mode::City,true);
 }
 void close() { if(isOpen()){CityAudio::end();closing=true;} }
 
@@ -158,15 +172,29 @@ bool serviceScanner() {
 }
 void handleKey(char key) {
     if(closing.load())return;
-    if(key=='`'||key=='m'||key=='M'||key=='q'||key=='Q'){close();return;}
-    if(key=='s'||key=='S')paused=!paused.load();
-    if(key>='1'&&key<='3')setMode(key=='1'?Mode::City:key=='2'?Mode::Radar:Mode::Rain);
-    if(key==','||key=='/'){autoPage=false;page+=key=='/'?1:(page?uint32_t(-1):0);}
-    if(key=='0'){autoPage=true;pageAt=millis();}
-    if(key=='a'||key=='A')activeNames=!activeNames.load();
-    if(key=='b'||key=='B'){CityAudio::toggleMusic(millis());audioNotice=true;audioNoticeAt=millis();}
-    if(key=='n'||key=='N'){CityAudio::nextTrack();audioNotice=true;audioNoticeAt=millis();}
-    if(key=='f'||key=='F'){
+    const auto action=actionFor(key);
+    if(showHelp){
+        if(action==Action::Up && helpScroll)--helpScroll;
+        if(action==Action::Down && helpScroll<helpMaxScroll())++helpScroll;
+        if(action==Action::Left)helpScroll=helpScroll>HELP_ROWS?helpScroll-HELP_ROWS:0;
+        if(action==Action::Right)helpScroll=std::min(helpMaxScroll(),helpScroll+HELP_ROWS);
+        if(action==Action::Help || action==Action::Menu){
+            if(helpReturnToMenu)close();else showHelp=false;
+        }
+        if(action==Action::Mute)CityAudio::mute();
+        return;
+    }
+    if(action==Action::Menu){close();return;}
+    if(action==Action::Pause)paused=!paused.load();
+    if(action==Action::City)setMode(Mode::City);
+    if(action==Action::Radar)setMode(Mode::Radar);
+    if(action==Action::Rain)setMode(Mode::Rain);
+    if(action==Action::Left || action==Action::Right){autoPage=false;page+=action==Action::Right?1:(page?uint32_t(-1):0);}
+    if(action==Action::AutoPage){autoPage=true;pageAt=millis();}
+    if(action==Action::Active)activeNames=!activeNames.load();
+    if(action==Action::Music){CityAudio::toggleMusic(millis());audioNotice=true;audioNoticeAt=millis();}
+    if(action==Action::NextTrack){CityAudio::nextTrack();audioNotice=true;audioNoticeAt=millis();}
+    if(action==Action::Alerts){
         CityAudio::toggleEffects();
         // Enabling alerts can be tested with an already visible Flipper.
         if(CityAudio::effectsEnabled())for(const auto& e:snapshot)
@@ -174,12 +202,13 @@ void handleKey(char key) {
                 CityAudio::notify(true);break;
             }
     }
-    if(key=='x'||key=='X')CityAudio::mute();
-    if(key=='-')CityAudio::adjustVolume(-16);
-    if(key=='='||key=='+')CityAudio::adjustVolume(16);
-    if(key=='h'||key=='H')showHelp=!showHelp;
-    if(key=='p'||key=='P')stats=!stats;
-    if(key=='d'||key=='D'){
+    if(action==Action::Mute)CityAudio::mute();
+    if(action==Action::VolumeDown)CityAudio::adjustVolume(-16);
+    if(action==Action::VolumeUp)CityAudio::adjustVolume(16);
+    if(action==Action::Help)openHelp();
+    if(action==Action::Stats)stats=!stats;
+    if(action==Action::Findings)showFindings=!showFindings;
+    if(action==Action::Display){
         displayOn=!displayOn;
         NetworkContext::displayEnabled=displayOn;
         if(displayOn)M5.Lcd.wakeup();else M5.Lcd.sleep();
@@ -200,11 +229,11 @@ void update() {
         return;
     }
     const uint32_t now=millis();
-    if(autoPage && uint32_t(now-pageAt)>=6000){++page;pageAt=now;}
+    if(autoPage && !showHelp && uint32_t(now-pageAt)>=6000){++page;pageAt=now;}
     // Audio timing remains independent of redraw cadence and display sleep.
     const uint8_t events=soundEvents.exchange(0);
     if(events)CityAudio::notify(true);
-    if(!closing.load())CityAudio::update(now,ready.load());
+    if(!closing.load() && !helpReturnToMenu)CityAudio::update(now,ready.load());
     if(!displayOn || uint32_t(now-lastFrame)<framePeriod)return;
     lastFrame=now;
     copyObservations(now);
@@ -212,20 +241,20 @@ void update() {
     if(closing.load())status="RETURNING TO MENU...";
     else if(!ready.load())status="WAITING FOR SCAN TO YIELD";
     else if(scanFailed.load())status="SCAN ERROR / RETRYING";
-    else if(paused.load())status="SCAN PAUSED / S TO RESUME";
+    else if(stats){
+        std::snprintf(metrics,sizeof(metrics),"%lu MS / %u KB / %s",
+                      static_cast<unsigned long>(lastCostUs/1000),unsigned(ESP.getFreeHeap()/1024),
+                      paused.load()?"PAUSED":"RUNNING");
+        status=metrics;
+    }
+    else if(paused.load())status="SCAN PAUSED / P TO RESUME";
     else if(activeNames.load()!=activeApplied.load())status="NAME MODE CHANGES NEXT SCAN";
-    else if(showHelp)status=(now/3000)%2?"A NAMES B MUSIC N NEXT F ALERT X MUTE":"1 CITY 2 RADAR 3 RAIN ,/ PAGE 0 AUTO";
     else if(CityAudio::effectsEnabled() && std::strcmp(CityAudio::alertStatus(),"ALERT READY")!=0)
         status=CityAudio::alertStatus();
     else if(audioNotice && uint32_t(now-audioNoticeAt)<6000)
         status=(uint32_t(now-audioNoticeAt)/2000)%2?CityAudio::trackName():CityAudio::musicStatus();
     else if(CityAudio::musicEnabled() && std::strcmp(CityAudio::musicStatus(),"PLAYING SD")!=0)
         status=CityAudio::musicStatus();
-    else if(stats){
-        std::snprintf(metrics,sizeof(metrics),"%lu MS / %u KB / ESC BACK",
-                      static_cast<unsigned long>(lastCostUs/1000),unsigned(ESP.getFreeHeap()/1024));
-        status=metrics;
-    }
     else {
         std::snprintf(metrics,sizeof(metrics),"A %s B %s F %s V%03u %s",
             activeApplied.load()?"ACT":"PAS",CityAudio::musicEnabled()?"ON":"OFF",
@@ -234,7 +263,8 @@ void update() {
         status=metrics;
     }
     const uint32_t start=micros();
-    renderer->draw(surface,{snapshot,now,status,page});
+    if(showHelp && !closing.load())drawHelp(surface,helpScroll);
+    else renderer->draw(surface,{snapshot,now,status,page,showFindings});
     {
         UIContext::DisplayGuard displayGuard(true);
         if (!displayGuard) return;

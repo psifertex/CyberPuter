@@ -5,6 +5,7 @@ namespace VisualizationView {
 // UI-thread API. Opening is asynchronous while the existing scan finishes.
 bool open(Visualization::Mode mode = Visualization::Mode::City);
 bool isOpen();
+bool openHelp();
 void close();
 void update();
 void handleKey(char key);

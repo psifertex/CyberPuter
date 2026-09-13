@@ -11,13 +11,14 @@ City/rain show up to 12 labels; radar shows eight plus a scope of all retained
 devices. Pages advance every six seconds; **comma / slash** page manually and
 **0** resumes automatic paging.
 
-**S** pauses scanning, **D** sleeps/wakes the screen, **P** shows rendering/heap
-metrics, and **Esc/backtick**, **M**, or **Q** returns to the menu. The previous
+**P** pauses scanning, **D** sleeps/wakes the screen, **S** shows rendering/heap
+metrics, **T** hides/shows findings, and **Esc/backtick** or **Q** returns to the menu. The previous
 GhostBLE scan-enabled state is restored on exit.
 
 **A** toggles active scans to request additional BLE names. **B** toggles the
-SD soundtrack, **N** selects the next track, **F** toggles suspicious-only alerts, **X** silences both,
-and **- / =** adjusts city volume. **H** shows the key reference. Audio starts
+SD soundtrack, **N** selects the next track, **F** toggles suspicious-only alerts, **M / X** silences both,
+and **- / =** adjusts city volume. **H** opens full-screen help; **semicolon/period**
+scroll it, without Fn. The menu Help item uses the same page. Audio starts
 on and respects GhostBLE's master Audio setting. Active scans do not pair or
 connect; some devices still will not supply names.
 

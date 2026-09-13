@@ -12,7 +12,7 @@ card**. It should contain:
 ```
 
 Insert the card before boot. **B** toggles music, **N** selects the next track,
-**F** toggles suspicious-device alerts, **X** silences both and **−/=**
+**F** toggles suspicious-device alerts, **M / X** silences both and **−/=**
 change volume. Music and alerts start on when entering the visualizations,
 subject to GhostBLE's saved master Audio setting.
 Selection works while muted; B restarts the selected song. At the end of a song

@@ -192,7 +192,7 @@ void loop() {
         VisualizationView::handleKey(key);
     }
 #else
-    if (M5.BtnA.wasPressed()) VisualizationView::handleKey('s');
+    if (M5.BtnA.wasPressed()) VisualizationView::handleKey('p');
     if (M5.BtnB.wasPressed()) VisualizationView::close();
 #endif
     if (NetworkContext::wardrivingEnabled.load()) NetworkContext::gpsManager.update();

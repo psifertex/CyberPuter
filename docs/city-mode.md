@@ -10,15 +10,25 @@ the audio playback session.
 | Comma / slash | Previous / next device page; pauses automatic paging |
 | 0 | Resume automatic paging every six seconds |
 | A | Toggle passive / active scanning to request advertised names |
-| S | Pause scanning; animations continue and stale observations expire |
+| P | Pause scanning; animations continue and stale observations expire |
+| T | Hide/show findings; scanning and audio continue |
 | B / N | Toggle music / next SD track |
-| F / X | Toggle suspicious-device alerts / mute music and alerts |
+| F / M or X | Toggle suspicious-device alerts / mute music and alerts |
 | - / = | Lower / raise volume |
-| H / P | Key reference / rendering time and free heap |
+| H / S | Full-screen scrollable help / rendering time and free heap |
+| Semicolon / period | Scroll help up / down, no Fn |
 | D | Sleep / wake display; audio continues |
-| Esc/backtick, M, Q | Open tools/settings menu |
+| Esc/backtick, Q | Open tools/settings menu; close help first if visible |
 
 ## Crowds and names
+
+T suppresses finding labels, counts and radar contacts without stopping the
+scanner or audio. Signal rain uses decorative hex glyphs while findings are
+hidden; these are background artwork, not demo devices. H and menu Show Help
+share one scrollable page built from the actual binding table. Help opened from
+the menu returns there and does not start music or a new scan window; help opened
+over a visualization leaves its audio/scanning running. M/X remains available
+to mute while reading help.
 
 City shows six large signs in small scenes, twelve compact signs in crowds.
 Radar lists eight labels and plots all retained observations; angles are

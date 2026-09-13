@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "controls.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -73,9 +74,10 @@ void drawCity(Surface& s, const Frame& frame) {
     const uint32_t t=frame.now;
     s.fill(0,0,WIDTH,HEIGHT,Background);
     text(s,"GHOST CITY",5,4,Violet);
-    size_t count=0;for(const auto& e:frame.observations)if(e.used && uint32_t(t-e.lastSeen)<EXPIRE_MS)++count;
+    size_t count=0;for(const auto& e:frame.observations)if(frame.showFindings && e.used && uint32_t(t-e.lastSeen)<EXPIRE_MS)++count;
     const auto selection=selectPage(frame.observations,t,count>6?12:6,frame.page);
-    char buffer[40];std::snprintf(buffer,sizeof(buffer),"N%u U%u %u/%u",unsigned(selection.named),unsigned(count-selection.named),unsigned(selection.page+1),unsigned(selection.pages));text(s,buffer,112,4,Cyan);
+    char buffer[40];
+    if(frame.showFindings){std::snprintf(buffer,sizeof(buffer),"N%u U%u %u/%u",unsigned(selection.named),unsigned(count-selection.named),unsigned(selection.page+1),unsigned(selection.pages));text(s,buffer,112,4,Cyan);}
     s.fill(4,15,232,1,Grid);
     for(int i=0;i<40;++i)pixel(s,(i*71)%240,20+(i*19)%75,i%4?Dim:Window);
     circle(s,196,40,15,VioletDim);circle(s,196,40,13,Dim);
@@ -93,7 +95,7 @@ void drawCity(Surface& s, const Frame& frame) {
     // Named devices lead each page; crowded scenes use twelve compact signs.
     static const int signs[][3]={{4,78,11},{155,70,12},{37,95,14},{151,101,13},{66,65,13},{3,49,12}};
     size_t visible=0;
-    for(size_t n=0;n<selection.count;++n){
+    for(size_t n=0;frame.showFindings && n<selection.count;++n){
         const auto& e=frame.observations[selection.indices[n]];
         const uint32_t age=t-e.lastSeen;
         if(!e.used||age>=EXPIRE_MS)continue;
@@ -122,13 +124,14 @@ void drawCity(Surface& s, const Frame& frame) {
     for(int i=0;i<30;++i)s.fill((i*37+t/125)%234,115+i%5,2+i%5,1,i%2?VioletDim:TealDim);
     s.fill(0,122,240,13,Sign);s.fill(0,121,240,1,Grid);
     if(frame.status)text(s,frame.status,5,125,Amber);
-    else{std::snprintf(buffer,sizeof(buffer),"LABScon / %02u SIGNALS ALIVE",unsigned(count));text(s,buffer,5,125,Violet);}
-    if(!count && !frame.status)text(s,"LISTENING...",78,102,Cyan);
+    else if(frame.showFindings){std::snprintf(buffer,sizeof(buffer),"LABScon / %02u SIGNALS ALIVE",unsigned(count));text(s,buffer,5,125,Violet);}
+    if(frame.showFindings && !count && !frame.status)text(s,"LISTENING...",78,102,Cyan);
 }
-static void viewHeader(Surface& s,const char* title,const Selection& p) {
+static void viewHeader(Surface& s,const char* title,const Selection& p,bool findings) {
     text(s,title,4,4,Violet);
     char b[30];std::snprintf(b,sizeof(b),"N%u U%u %u/%u",unsigned(p.named),unsigned(p.total-p.named),unsigned(p.page+1),unsigned(p.pages));
-    text(s,b,112,4,Cyan);s.fill(0,15,240,1,Grid);
+    if(findings)text(s,b,112,4,Cyan);
+    s.fill(0,15,240,1,Grid);
 }
 static void viewFooter(Surface& s,const Frame& f) {
     s.fill(0,122,240,13,Sign);text(s,f.status?f.status:"1 CITY 2 RADAR 3 RAIN",4,125,Amber);
@@ -143,13 +146,13 @@ static void label(Surface& s,const Observation& e,int x,int y,size_t width,uint3
 }
 void drawRadar(Surface& s,const Frame& f) {
     s.fill(0,0,WIDTH,HEIGHT,Background);
-    const auto p=selectPage(f.observations,f.now,8,f.page);viewHeader(s,"LABScon RADAR",p);
+    const auto p=selectPage(f.observations,f.now,8,f.page);viewHeader(s,"LABScon RADAR",p,f.showFindings);
     for(int r=15;r<=45;r+=15)circle(s,54,67,r,Grid);
     s.fill(9,67,91,1,Grid);s.fill(54,22,1,91,Grid);
     const float angle=(f.now%6000)*6.2831853f/6000;
     for(int r=0;r<46;++r)pixel(s,54+int(std::cos(angle)*r),67+int(std::sin(angle)*r),TealDim);
     for(const auto& e:f.observations){
-        if(!e.used||uint32_t(f.now-e.lastSeen)>=EXPIRE_MS)continue;
+        if(!f.showFindings||!e.used||uint32_t(f.now-e.lastSeen)>=EXPIRE_MS)continue;
         uint32_t hash=2166136261u;for(auto b:e.identity)hash=(hash^b)*16777619u;
         const float a=(hash%360)*0.017453293f;const int r=std::clamp((-int(e.rssi)-25)/2,5,44);
         const int x=54+int(std::cos(a)*r),y=67+int(std::sin(a)*r);
@@ -159,22 +162,35 @@ void drawRadar(Surface& s,const Frame& f) {
         else if(e.named)circle(s,x,y,2,Cyan);
     }
     text(s,"ART NOT BEARING",9,114,VioletDim);
-    for(size_t i=0;i<p.count;++i)label(s,f.observations[p.indices[i]],112,23+int(i)*12,21,f.now,i%2?Pink:Cyan);
+    for(size_t i=0;f.showFindings && i<p.count;++i)label(s,f.observations[p.indices[i]],112,23+int(i)*12,21,f.now,i%2?Pink:Cyan);
     viewFooter(s,f);
 }
 void drawRain(Surface& s,const Frame& f) {
     s.fill(0,0,WIDTH,HEIGHT,Background);
     const auto p=selectPage(f.observations,f.now,12,f.page);
-    for(size_t i=0;i<p.count;++i){
-        const auto& e=f.observations[p.indices[i]];const size_t len=std::strlen(e.name);
-        for(int j=0;j<7 && len;++j){char ch[2]={e.name[(f.now/240+j)%len],0};
+    for(size_t i=0;i<(f.showFindings?p.count:12);++i){
+        const char* glyphs=f.showFindings?f.observations[p.indices[i]].name:"0123456789ABCDEF";
+        const size_t len=std::strlen(glyphs);
+        for(int j=0;j<7 && len;++j){char ch[2]={glyphs[(f.now/240+j+i)%len],0};
             text(s,ch,8+int(i)*19,18+int((f.now/35+i*29+j*11)%99),j==0?TealDim:Dim);}
     }
-    s.fill(0,0,240,17,Background);viewHeader(s,"SIGNAL RAIN",p);
+    s.fill(0,0,240,17,Background);viewHeader(s,"SIGNAL RAIN",p,f.showFindings);
     s.fill(83,22,74,15,Sign);box(s,83,22,74,15,Pink);text(s,"LABScon",99,26,White);
-    for(size_t i=0;i<p.count;++i){int x=3+int(i%2)*120,y=44+int(i/2)*12;
+    for(size_t i=0;f.showFindings && i<p.count;++i){int x=3+int(i%2)*120,y=44+int(i/2)*12;
         s.fill(x,y-1,115,10,Sign);label(s,f.observations[p.indices[i]],x+2,y,18,f.now,i%2?Pink:Cyan);}
     viewFooter(s,f);
+}
+void drawHelp(Surface& s,size_t scroll) {
+    scroll=std::min(scroll,helpMaxScroll());
+    s.fill(0,0,WIDTH,HEIGHT,Background);
+    text(s,"LABScon / CONTROLS",5,4,Pink);s.fill(0,15,240,1,Grid);
+    for(size_t i=0;i<HELP_ROWS && scroll+i<helpLineCount();++i)
+        text(s,helpLine(scroll+i),5,21+int(i)*11,i%2?White:Cyan);
+    s.fill(236,20,2,98,Grid);
+    const int thumb=std::max(4,int(98*HELP_ROWS/helpLineCount()));
+    const int y=20+int((98-thumb)*scroll/std::max(size_t(1),helpMaxScroll()));
+    s.fill(236,y,2,thumb,Violet);
+    s.fill(0,121,240,1,Grid);text(s,"UP/DOWN SCROLL  H/ESC CLOSE",4,125,Amber);
 }
 const Renderer* rendererFor(Mode mode) {
     static const Renderer CITY{Mode::City,"Neon city",drawCity};
