@@ -12,7 +12,7 @@ the audio playback session.
 | A | Toggle passive / active scanning to request advertised names |
 | S | Pause scanning; animations continue and stale observations expire |
 | B / N | Toggle music / next SD track |
-| F / X | Toggle discovery effects / mute music and effects |
+| F / X | Toggle suspicious-device alerts / mute music and alerts |
 | - / = | Lower / raise volume |
 | H / P | Key reference / rendering time and free heap |
 | D | Sleep / wake display; audio continues |
@@ -58,9 +58,14 @@ advertised names. Mesh/vehicle/wearable recognition is informational.
 ## Sound
 
 See [soundtrack setup and licensing](soundtrack.md) for SD tracks and conversion.
-Music and effects start off, respect the master Audio toggle, and continue across
-number-key view changes without restarting. Effects are coalesced to at most one
-two-note event per 750 ms. Leaving the visualization stops audio.
+Music and suspicious-only alerts start on, respect the saved master Audio toggle,
+and continue across number-key view changes without restarting. Regular devices
+and newly resolved names are silent. New watchlist matches trigger a 1.846-second
+SD alarm; crowds coalesce behind a five-second cooldown. Repeated advertisements
+from a retained flagged observation do not retrigger it. Turning F on also alerts
+once if a flagged device is already visible. Leaving the visualization stops audio.
+
+See the [complete Cardputer keymap](keymap.md), including legacy utility controls.
 
 ## Budgets and validation
 

@@ -20,6 +20,13 @@ uint8_t level=64, previousVolume=0, previousChannels[4]{};
 constexpr uint8_t MUSIC_CHANNEL=4;
 constexpr size_t MAX_TRACKS=16, NAME_BYTES=48;
 constexpr const char* MUSIC_DIR="/cyberputer/music";
+constexpr const char* ALERT_PATH="/cyberputer/sfx/suspicious.wav";
+enum class AlertState : uint8_t { Unloaded, Requested, Ready, Failed };
+std::atomic<AlertState> alertState{AlertState::Unloaded};
+// Loaded once, then immutable until reboot: asynchronous speaker stop cannot
+// race with refills or deallocation. Exactly 32 KB, independent of SD file size.
+int16_t alertPcm[16000]{};
+size_t alertSamples=0;
 // Producer owns Filling, UI owns Ready/Playing. Neither reuses samples until
 // M5Unified has released its retained pointer. Four buffers use 16 KB PCM.
 PcmQueue pcmQueue;
@@ -56,8 +63,17 @@ void musicWorker(void*) {
     for(;;){
         vTaskDelay(pdMS_TO_TICKS(5));
         const auto latest=request.load();
-        if(latest==localRequest && (!wanted.load() || failed))continue;
+        if(latest==localRequest && (!wanted.load() || failed) && alertState.load()!=AlertState::Requested)continue;
         if(!logMutex || xSemaphoreTake(logMutex,0)!=pdTRUE)continue;
+        if(alertState.load()==AlertState::Requested){
+            File alertFile=SD.open(ALERT_PATH,FILE_READ);
+            FileReader reader(alertFile);WavInfo info;
+            const bool valid=alertFile && readPcmWav(reader,info) && info.rate==8000 &&
+                info.bytes<=sizeof(alertPcm) && alertFile.seek(info.offset) &&
+                alertFile.read(reinterpret_cast<uint8_t*>(alertPcm),info.bytes)==info.bytes;
+            if(valid)alertSamples=info.bytes/2;
+            alertFile.close();alertState.store(valid?AlertState::Ready:AlertState::Failed);
+        }
         if(latest!=localRequest){
             file.close();localRequest=latest;failed=false;position=0;
             const auto advance=advances.exchange(0);
@@ -138,11 +154,10 @@ void updateMusic() {
         pcmQueue.submit();
     }
 }
-const uint8_t WAVE[]={128,137,146,155,164,173,182,191,200,191,182,173,164,155,146,137,
-                      128,119,110,101,92,83,74,65,56,65,74,83,92,101,110,119};
 struct SpeakerSink final : SoundSink {
-    void note(Voice voice,uint16_t hz,uint16_t ms) override {
-        if(acquired)M5.Speaker.tone(hz,ms,4+int(voice),true,WAVE,sizeof(WAVE));
+    bool alert() override {
+        if(!acquired || alertState.load()!=AlertState::Ready || M5.Speaker.isPlaying(7))return false;
+        return M5.Speaker.playRaw(alertPcm,alertSamples,8000,false,1,7,false);
     }
     void stop(Voice voice) override { if(acquired)M5.Speaker.stop(4+int(voice)); }
 } sink;
@@ -153,7 +168,15 @@ void release() {
     M5.Speaker.setVolume(previousVolume);acquired=false;
 }
 } // namespace
-void begin() { track=Soundtrack{};wanted.store(false);++request;level=std::min<uint8_t>(MenuController::getAlarmVolume(),64); }
+void begin() {
+    track=Soundtrack{};
+    level=std::min<uint8_t>(MenuController::getAlarmVolume(),64);
+    // Saved master Audio mute still wins; number-key mode changes never re-enter.
+    track.setMusic(true,millis(),sink);track.setEffects(true,sink);
+    wanted.store(true);++request;
+    if(alertState.load()!=AlertState::Ready)alertState.store(AlertState::Requested);
+    if(!ensureWorker())alertState.store(AlertState::Failed);
+}
 void end() { mute(); }
 bool musicEnabled() { return track.musicEnabled(); }
 bool effectsEnabled() { return track.effectsEnabled(); }
@@ -168,6 +191,13 @@ const char* musicStatus() {
     portENTER_CRITICAL(&metadataLock);memcpy(copy,displayStatus,sizeof(copy));portEXIT_CRITICAL(&metadataLock);
     return copy;
 }
+const char* alertStatus() {
+    switch(alertState.load()){
+        case AlertState::Ready:return "ALERT READY";
+        case AlertState::Failed:return "BAD/MISSING SFX/SUSPICIOUS.WAV";
+        default:return "LOADING SUSPICIOUS ALERT...";
+    }
+}
 void toggleMusic(uint32_t now) {
     if(!musicEnabled() && (!MenuController::getAudioEnabled() || !ensureWorker()))return;
     stopQueuedMusic();track.setMusic(!musicEnabled(),now,sink);
@@ -179,7 +209,10 @@ void nextTrack() {
     stopQueuedMusic();++advances;++request;
 }
 void toggleEffects() {
-    if(!effectsEnabled() && !MenuController::getAudioEnabled())return;
+    if(!effectsEnabled()){
+        if(!MenuController::getAudioEnabled() || !ensureWorker())return;
+        if(alertState.load()!=AlertState::Ready)alertState.store(AlertState::Requested);
+    }
     track.setEffects(!effectsEnabled(),sink);
 }
 void mute() {
@@ -190,7 +223,7 @@ void adjustVolume(int delta) {
     level=uint8_t(std::max(0,std::min(160,int(level)+delta)));
     if(acquired)M5.Speaker.setVolume(level);
 }
-void notify(bool nameResolved) { track.notify(nameResolved); }
+void notify(bool suspicious) { track.notify(suspicious); }
 void update(uint32_t now,bool scannerReady) {
     if(!MenuController::getAudioEnabled()){mute();updateMusic();return;}
     if(!musicEnabled()&&!effectsEnabled()){release();updateMusic();return;}

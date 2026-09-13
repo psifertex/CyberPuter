@@ -19,7 +19,7 @@ using namespace Visualization;
 std::atomic<bool> opened{false}, closing{false}, stopped{false}, ready{false};
 std::atomic<bool> paused{false}, scanFailed{false};
 std::atomic<bool> activeNames{false}, activeApplied{false};
-std::atomic<uint8_t> soundEvents{0}; // Coalesced discoveries/name resolutions.
+std::atomic<uint8_t> soundEvents{0}; // Newly flagged observations only.
 bool restoreScan = false, displayOn = true, stats = false;
 bool showHelp=false;
 uint32_t audioNoticeAt=0;
@@ -68,8 +68,7 @@ class ObservationCallbacks final : public NimBLEScanCallbacks {
         portENTER_CRITICAL(&storeMux);
         const auto event=store.observe(identity,name.data(),name.size(),device->getRSSI(),now,match);
         portEXIT_CRITICAL(&storeMux);
-        if(event==ObservationEvent::NameResolved)soundEvents.fetch_or(2);
-        else if(event==ObservationEvent::Discovered)soundEvents.fetch_or(1);
+        if(event==ObservationEvent::Flagged)soundEvents.store(1);
     }
 } observationCallbacks;
 } // namespace
@@ -167,7 +166,14 @@ void handleKey(char key) {
     if(key=='a'||key=='A')activeNames=!activeNames.load();
     if(key=='b'||key=='B'){CityAudio::toggleMusic(millis());audioNotice=true;audioNoticeAt=millis();}
     if(key=='n'||key=='N'){CityAudio::nextTrack();audioNotice=true;audioNoticeAt=millis();}
-    if(key=='f'||key=='F')CityAudio::toggleEffects();
+    if(key=='f'||key=='F'){
+        CityAudio::toggleEffects();
+        // Enabling alerts can be tested with an already visible Flipper.
+        if(CityAudio::effectsEnabled())for(const auto& e:snapshot)
+            if(e.used && uint32_t(millis()-e.lastSeen)<EXPIRE_MS && DeviceClassifier::isFlagged(e.classification)){
+                CityAudio::notify(true);break;
+            }
+    }
     if(key=='x'||key=='X')CityAudio::mute();
     if(key=='-')CityAudio::adjustVolume(-16);
     if(key=='='||key=='+')CityAudio::adjustVolume(16);
@@ -197,7 +203,7 @@ void update() {
     if(autoPage && uint32_t(now-pageAt)>=6000){++page;pageAt=now;}
     // Audio timing remains independent of redraw cadence and display sleep.
     const uint8_t events=soundEvents.exchange(0);
-    if(events)CityAudio::notify(events&2);
+    if(events)CityAudio::notify(true);
     if(!closing.load())CityAudio::update(now,ready.load());
     if(!displayOn || uint32_t(now-lastFrame)<framePeriod)return;
     lastFrame=now;
@@ -208,7 +214,9 @@ void update() {
     else if(scanFailed.load())status="SCAN ERROR / RETRYING";
     else if(paused.load())status="SCAN PAUSED / S TO RESUME";
     else if(activeNames.load()!=activeApplied.load())status="NAME MODE CHANGES NEXT SCAN";
-    else if(showHelp)status=(now/3000)%2?"A NAMES B MUSIC N NEXT F FX X MUTE":"1 CITY 2 RADAR 3 RAIN ,/ PAGE 0 AUTO";
+    else if(showHelp)status=(now/3000)%2?"A NAMES B MUSIC N NEXT F ALERT X MUTE":"1 CITY 2 RADAR 3 RAIN ,/ PAGE 0 AUTO";
+    else if(CityAudio::effectsEnabled() && std::strcmp(CityAudio::alertStatus(),"ALERT READY")!=0)
+        status=CityAudio::alertStatus();
     else if(audioNotice && uint32_t(now-audioNoticeAt)<6000)
         status=(uint32_t(now-audioNoticeAt)/2000)%2?CityAudio::trackName():CityAudio::musicStatus();
     else if(CityAudio::musicEnabled() && std::strcmp(CityAudio::musicStatus(),"PLAYING SD")!=0)

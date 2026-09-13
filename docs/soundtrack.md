@@ -7,11 +7,14 @@ card**. It should contain:
 /cyberputer/music/01-Cybershaman.wav
 /cyberputer/music/02-Cyberpunk-Moonlight-Sonata.wav
 /cyberputer/music/CREDITS.md
+/cyberputer/sfx/suspicious.wav
+/cyberputer/sfx/CREDITS.md
 ```
 
 Insert the card before boot. **B** toggles music, **N** selects the next track,
-**F** toggles discovery/name-resolution effects, **X** silences both and **−/=**
-change volume. Music starts off and respects GhostBLE's master Audio setting.
+**F** toggles suspicious-device alerts, **X** silences both and **−/=**
+change volume. Music and alerts start on when entering the visualizations,
+subject to GhostBLE's saved master Audio setting.
 Selection works while muted; B restarts the selected song. At the end of a song
 the playlist advances automatically and wraps. Switching visualization modes
 keeps the music playing. The music status/name API lets the UI show the selected
@@ -19,9 +22,27 @@ filename and missing-card, missing-file, unsupported-WAV or read-error messages.
 
 The two bundled files contain complete recordings, converted to mono 16-bit PCM
 WAV at 22,050 Hz and gain 0.72. No music samples are embedded in the firmware;
-only effects work without an SD playlist.
+The alert is a separate SD sample, not an embedded tone; missing assets are
+reported in the footer.
 
 ## Add recordings
+
+The suspicious-only alarm is [Alarm by EZduzziteh](https://opengameart.org/content/alarm-1),
+CC0. Credits, hashes and conversion command are in
+`sdcard/cyberputer/sfx/CREDITS.md`. Keep its directory separate from the playlist.
+F enables/disables alerts; ordinary discoveries and name resolution are silent.
+Newly flagged devices alert once, with a five-second global crowd cooldown;
+F on also alerts for a flagged device already visible. Classification is heuristic,
+not proof of malicious activity. Music and alerts begin enabled on entry, but
+the saved master Audio mute still takes precedence.
+
+The worker loads the alert once into an immutable 32 KB cache. Replacement alerts
+must be mono signed 16-bit PCM WAV at 8 kHz and at most two seconds (32,000 PCM
+bytes). Reload by rebooting. Missing/invalid files produce a footer message;
+F off/on retries a failed load, with no generic chirp fallback. This cache remains
+valid across menu exits so asynchronous speaker stops cannot access freed memory.
+
+## Add music recordings
 
 The player discovers up to 16 `.wav` files in `/cyberputer/music`, sorts their
 filenames alphabetically, and displays filenames as track names. Use numeric

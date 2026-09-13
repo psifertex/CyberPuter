@@ -63,7 +63,9 @@ int main(int argc,char** argv) {
     for(int i=1;i<argc;++i){
         std::ifstream file(argv[i],std::ios::binary);assert(file.good());
         Memory bundled;bundled.data.assign(std::istreambuf_iterator<char>(file),{});
-        assert(readPcmWav(bundled,info) && info.rate==22050 && info.bytes>22050*60);
+        assert(readPcmWav(bundled,info));
+        if(info.rate==8000)assert(info.bytes>0 && info.bytes<=32000);
+        else assert(info.rate==22050 && info.bytes>22050*60);
         std::cout<<argv[i]<<": "<<double(info.bytes)/(info.rate*2)<<" seconds\n";
     }
     std::cout<<"PASS: PCM queue ownership/async stop/epoch changes; WAV truncation/overflow/format/metadata\n";

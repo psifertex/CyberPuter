@@ -19,6 +19,7 @@ ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identit
     const int incomingRank=rank(incomingNamed,classification);
     const bool isNew = slot == nullptr;
     const bool previouslyNamed = slot && slot->named;
+    const bool previouslyFlagged = slot && DeviceClassifier::isFlagged(slot->classification);
     if (!slot) {
         for (auto& entry : entries) if (!entry.used) { slot = &entry; break; }
         // Full crowd: unknown traffic cannot evict a live named observation.
@@ -52,6 +53,7 @@ ObservationEvent ObservationStore::observe(const std::array<uint8_t, 7>& identit
     }
     slot->lastSeen = now;
     slot->classification=DeviceClassifier::strongerMatch(slot->classification,classification);
+    if(!previouslyFlagged && DeviceClassifier::isFlagged(slot->classification))return ObservationEvent::Flagged;
     if (slot->named && !previouslyNamed) return ObservationEvent::NameResolved;
     return isNew ? ObservationEvent::Discovered : ObservationEvent::None;
 }

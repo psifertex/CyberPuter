@@ -31,4 +31,5 @@ endforeach()
 add_test(NAME device_classifier COMMAND device_classifier_test)
 add_test(NAME soundtrack COMMAND soundtrack_decode_test
     ${CMAKE_CURRENT_SOURCE_DIR}/../sdcard/cyberputer/music/01-Cybershaman.wav
-    ${CMAKE_CURRENT_SOURCE_DIR}/../sdcard/cyberputer/music/02-Cyberpunk-Moonlight-Sonata.wav)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../sdcard/cyberputer/music/02-Cyberpunk-Moonlight-Sonata.wav
+    ${CMAKE_CURRENT_SOURCE_DIR}/../sdcard/cyberputer/sfx/suspicious.wav)

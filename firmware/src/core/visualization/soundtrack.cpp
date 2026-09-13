@@ -7,25 +7,20 @@ void Soundtrack::setMusic(bool enabled, uint32_t, SoundSink& sink) {
     if(!enabled)for(auto voice:{Voice::Bass,Voice::Lead,Voice::Percussion})sink.stop(voice);
 }
 void Soundtrack::setEffects(bool enabled, SoundSink& sink) {
-    effects=enabled;pending=pendingNamed=effectTail=hasEffectTime=false;
+    effects=enabled;pending=hasEffectTime=false;
     if(!enabled)sink.stop(Voice::Effect);
 }
 void Soundtrack::silence(SoundSink& sink) {
     setMusic(false,0,sink);setEffects(false,sink);
 }
-void Soundtrack::notify(bool nameResolved) {
-    if(!effects)return;
-    pending=true;pendingNamed=pendingNamed||nameResolved;
+void Soundtrack::notify(bool suspicious) {
+    if(effects && suspicious)pending=true;
 }
 void Soundtrack::tick(uint32_t now, SoundSink& sink) {
-    if(effectTail && uint32_t(now-lastEffect)>=65){
-        sink.note(Voice::Effect,effectNamed?1319:784,65);effectTail=false;
-    }
-    // Crowds coalesce to at most one two-note event every 750 ms.
-    if(effects && pending && (!hasEffectTime || uint32_t(now-lastEffect)>=750)){
-        effectNamed=pendingNamed;pending=pendingNamed=false;
-        sink.note(Voice::Effect,effectNamed?880:523,45);
-        lastEffect=now;hasEffectTime=true;effectTail=true;
+    // Only newly flagged observations enter this path. Coalesce crowds and
+    // retain events while the SD sample loads; never emit ordinary chirps.
+    if(effects && pending && (!hasEffectTime || uint32_t(now-lastEffect)>=5000) && sink.alert()){
+        pending=false;lastEffect=now;hasEffectTime=true;
     }
 }
 } // namespace Visualization

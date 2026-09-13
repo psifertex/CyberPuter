@@ -16,9 +16,9 @@ metrics, and **Esc/backtick**, **M**, or **Q** returns to the menu. The previous
 GhostBLE scan-enabled state is restored on exit.
 
 **A** toggles active scans to request additional BLE names. **B** toggles the
-SD soundtrack, **N** selects the next track, **F** toggles discovery/name sounds, **X** silences both,
+SD soundtrack, **N** selects the next track, **F** toggles suspicious-only alerts, **X** silences both,
 and **- / =** adjusts city volume. **H** shows the key reference. Audio starts
-off and respects GhostBLE's master Audio setting. Active scans do not pair or
+on and respects GhostBLE's master Audio setting. Active scans do not pair or
 connect; some devices still will not supply names.
 
 ![Actual C++ city renderer with synthetic observations](preview/city-firmware-240x135.png)
@@ -43,8 +43,9 @@ pio run -d firmware -e ghostble_cardputer
 The application binary is
 `firmware/.pio/build/ghostble_cardputer/firmware.bin`.
 This is an application image, not a merged image to flash at address zero.
-Earlier builds were flashed with approval. This three-view/SD/watchlist update
-has not been flashed. Ask before every flash; no backups unless requested.
+The three-view/SD/watchlist build was flashed with approval. The suspicious-only
+alert/default-audio-on update has not been flashed. Ask before every flash;
+no backups unless requested.
 
 Both the unmodified baseline and the city firmware compile successfully.
 Host tests cover bounded storage, repeated observations, names, RSSI smoothing,

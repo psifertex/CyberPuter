@@ -19,7 +19,7 @@ struct Observation {
     DeviceClassifier::Match classification{};
 };
 using Snapshot = std::array<Observation, MAX_OBSERVATIONS>;
-enum class ObservationEvent { None, Discovered, NameResolved };
+enum class ObservationEvent { None, Discovered, NameResolved, Flagged };
 constexpr size_t MAX_LABELS = 12;
 struct Selection {
     std::array<uint8_t, MAX_LABELS> indices{};

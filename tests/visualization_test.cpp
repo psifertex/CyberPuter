@@ -9,35 +9,32 @@
 
 using namespace Visualization;
 struct Notes final : SoundSink {
-    struct Note { Voice voice; uint16_t hz, ms; };
-    std::vector<Note> played;
+    unsigned played=0;
+    bool ready=true;
     std::vector<Voice> stopped;
-    void note(Voice voice,uint16_t hz,uint16_t ms) override {
-        assert(hz>0 && hz<3000 && ms>0 && ms<=220);
-        played.push_back({voice,hz,ms});
-    }
+    bool alert() override { if(!ready)return false;++played;return true; }
     void stop(Voice voice) override { stopped.push_back(voice); }
 };
 static void testSoundtrack() {
     Notes notes;Soundtrack track;
-    track.notify(true);track.tick(1000,notes);assert(notes.played.empty());
+    track.notify(true);track.tick(1000,notes);assert(notes.played==0);
     track.setMusic(true,1000,notes);track.tick(1000,notes);
-    assert(notes.played.empty()); // Actual recording is streamed by the adapter.
-    track.tick(1001,notes);assert(notes.played.empty());
-    const auto before=notes.played.size();
-    track.tick(20000,notes);assert(notes.played.size()-before<=3); // No catch-up burst.
+    assert(notes.played==0); // Music does not synthesize discovery chirps.
     track.silence(notes);assert(!track.musicEnabled()&&!track.effectsEnabled());
     assert(notes.stopped.size()==4);
-    notes.played.clear();track.tick(30000,notes);assert(notes.played.empty());
     track.setEffects(true,notes);
-    for(int i=0;i<100;++i)track.notify(i==99);
-    track.tick(30000,notes);assert(notes.played.size()==1 && notes.played[0].hz==880);
-    track.tick(30065,notes);assert(notes.played.size()==2 && notes.played[1].hz==1319);
-    track.notify(false);track.tick(30100,notes);assert(notes.played.size()==2);
-    track.tick(30750,notes);assert(notes.played.size()==3 && notes.played[2].hz==523);
-    track.setEffects(false,notes);track.tick(31000,notes);assert(notes.played.size()==3);
-    track.setMusic(true,UINT32_MAX-50,notes);notes.played.clear();
-    track.tick(UINT32_MAX-50,notes);track.tick(90,notes);assert(notes.played.empty());
+    for(int i=0;i<100;++i){track.notify(false);track.tick(2000+i,notes);}
+    assert(notes.played==0); // Ordinary events remain silent with F enabled.
+    notes.ready=false;track.notify(true);track.tick(3000,notes);assert(notes.played==0);
+    notes.ready=true;track.tick(3001,notes);assert(notes.played==1);
+    for(int i=0;i<100;++i)track.notify(true);
+    track.tick(8000,notes);assert(notes.played==1);
+    track.tick(8001,notes);assert(notes.played==2);
+    track.tick(50000,notes);assert(notes.played==2); // No repeat without a new flag.
+    track.notify(true);track.setEffects(false,notes);track.tick(60000,notes);assert(notes.played==2);
+    track.setEffects(true,notes);track.notify(true);track.tick(UINT32_MAX-50,notes);
+    assert(notes.played==3);track.notify(true);track.tick(90,notes);assert(notes.played==3);
+    track.tick(5000,notes);assert(notes.played==4); // Cooldown survives uptime wrap.
 }
 static size_t count(const ObservationStore& store) {
     size_t n=0;for(const auto& e:store.snapshot())if(e.used)++n;return n;
@@ -97,11 +94,12 @@ int main(int argc,char** argv){
         for(size_t i=0;i<p.count;++i){assert(!visited[p.indices[i]]);visited[p.indices[i]]=true;}}
     id[0]=1;
     const DeviceClassifier::Match flagged{DeviceClassifier::Platform::Flipper,DeviceClassifier::Evidence::Service};
-    store.observe(id,nullptr,0,-60,501,flagged);
+    assert(store.observe(id,nullptr,0,-60,501,flagged)==ObservationEvent::Flagged);
     selected=selectPage(store.snapshot(),501,12,0);
     assert(selected.named==95 && DeviceClassifier::isFlagged(store.snapshot()[selected.indices[0]].classification));
     assert(!store.snapshot()[selected.indices[0]].named);
-    store.observe(id,nullptr,0,-60,502);
+    assert(store.observe(id,nullptr,0,-60,502,flagged)==ObservationEvent::None);
+    assert(store.observe(id,"FLIPPER NAME",12,-60,503,flagged)==ObservationEvent::NameResolved);
     assert(DeviceClassifier::isFlagged(store.snapshot()[selected.indices[0]].classification));
     assert(selectPage(store.snapshot(),502,0,0).count==0);
     assert(selectPage(store.snapshot(),502,999,999).count<=MAX_LABELS);
@@ -123,6 +121,6 @@ int main(int argc,char** argv){
     if(argc>1)frame.save(argv[1]);
     if(argc>2){drawRadar(frame,{store.snapshot(),3000,nullptr});frame.save(argv[2]);}
     if(argc>3){drawRain(frame,{store.snapshot(),3000,nullptr});frame.save(argv[3]);}
-    std::cout<<"PASS: observations, name resolution events, soundtrack timing/mute/rate limits, expiry/wrap and pixel bounds\n";
+    std::cout<<"PASS: observations, flag transitions, suspicious-only alerts/cooldown/mute, expiry/wrap and pixel bounds\n";
     std::cout<<"Framebuffer "<<sizeof(frame.pixels)<<" bytes; table "<<sizeof(ObservationStore)<<" bytes\n";
 }
