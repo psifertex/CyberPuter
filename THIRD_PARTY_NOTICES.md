@@ -29,6 +29,7 @@ copyright notices supplied with the exact versions used in a distribution.
 | Component | Credit / source | License |
 | --- | --- | --- |
 | M5Cardputer | [M5Stack](https://github.com/m5stack/M5Cardputer) | MIT; bundled Adafruit TCA8418 driver is BSD |
+| IRremote (M5Cardputer dependency) | [Arduino-IRremote contributors](https://github.com/Arduino-IRremote/Arduino-IRremote) | MIT |
 | M5Unified | [M5Stack and lovyan03](https://github.com/m5stack/M5Unified) | MIT |
 | M5GFX | [M5Stack and lovyan03](https://github.com/m5stack/M5GFX) | MIT; bundled components retain their notices |
 | NimBLE-Arduino | [h2zero and contributors](https://github.com/h2zero/NimBLE-Arduino) | Apache-2.0; bundled NimBLE/tinycrypt retain their notices |
