@@ -50,7 +50,10 @@ inline Action actionFor(char key,bool fn=false) {
 }
 inline size_t helpLineCount() {
     size_t n=sizeof(HELP_NOTES)/sizeof(*HELP_NOTES);
-    for(const auto& b:BINDINGS)if(b.help)++n;return n;
+    for (const auto& b : BINDINGS) {
+        if (b.help) ++n;
+    }
+    return n;
 }
 inline const char* helpLine(size_t index) {
     for(const auto& b:BINDINGS)if(b.help){if(!index--)return b.help;}
