@@ -114,7 +114,8 @@ void drawCity(Surface& s, const Frame& frame) {
         if(age>12000)color=visible%2?VioletDim:TealDim;
         if(flagged)color=Amber;
         const int marker=flagged?6:0,w=int(shown)*6+7+marker;
-        s.fill(x,y,w,13,Sign);box(s,x,y,w,13,flagged && (t/700)%2?VioletDim:color);
+        s.fill(x,y,w,13,Sign);
+        box(s,x,y,w,13,flagged && (t/700)%2 ? uint8_t(VioletDim) : color);
         if(flagged)text(s,"!",x+3,y+3,Amber);
         text(s,name,x+4+marker,y+3,color);
         ++visible;
